@@ -1,0 +1,65 @@
+{
+  "assetType": "DataExtension",
+  "name": "GARH16757_CUSTOMER_DE",
+  "customerKey": "GARH16757_CUSTOMER_DE",
+  "description": "Data Extension deployed through GitHub CI/CD POC GARH-16757",
+  "isSendable": false,
+  "isTestable": false,
+  "fields": [
+    {
+      "name": "CustomerID",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": true,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 0,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "FirstName",
+      "fieldType": "Text",
+      "maxLength": 100,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 1,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "LastName",
+      "fieldType": "Text",
+      "maxLength": 100,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 2,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "EmailAddress",
+      "fieldType": "EmailAddress",
+      "maxLength": 254,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 3,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "CreatedDate",
+      "fieldType": "Date",
+      "maxLength": null,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 4,
+      "precision": null,
+      "scale": null
+    }
+  ]
+}
