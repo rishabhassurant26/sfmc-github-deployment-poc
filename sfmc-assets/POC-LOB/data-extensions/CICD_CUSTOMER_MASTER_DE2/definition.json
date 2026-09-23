@@ -1,0 +1,54 @@
+{
+  "assetType": "DataExtension",
+  "name": "CICD_CUSTOMER_MASTER_DE2",
+  "customerKey": "CICD_CUSTOMER_MASTER_DE2",
+  "description": "Customer master data extension deployed through CI/CD",
+  "isSendable": false,
+  "isTestable": false,
+  "fields": [
+    {
+      "name": "CustomerID",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": true,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 0,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "FirstName",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 1,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "Email",
+      "fieldType": "EmailAddress",
+      "maxLength": 254,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 2,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "Status",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 3,
+      "precision": null,
+      "scale": null
+    }
+  ]
+}
