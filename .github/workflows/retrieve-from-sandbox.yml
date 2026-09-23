@@ -106,6 +106,179 @@ jobs:
           print(f'Validated {len(definitions)} Sandbox DE definition(s).')
           PYVALIDATE
 
+  verify-sandbox-sync:
+    name: Verify GitHub metadata matches SFMC Sandbox
+    needs: [validate-sandbox-push]
+    if: github.event_name == 'push' && needs.validate-sandbox-push.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout validated sandbox commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compare all approved DE definitions with live Sandbox (read-only)
+        shell: bash
+        env:
+          SFMC_AUTH_BASE_URI: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          SFMC_CLIENT_ID: ${{ secrets.SFMC_CLIENT_ID }}
+          SFMC_CLIENT_SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          python3 <<'PYSYNC'
+          import html
+          import json
+          import os
+          import sys
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          def fail(message):
+              print(f'::error::{message}')
+              sys.exit(1)
+
+          config = json.loads(Path('config/lob-config.json').read_text())
+          root = Path(config['assetRoot'], config['lineOfBusiness'],
+                      config['assetTypes']['dataExtensions']['directory'])
+          mid = str(config['environments']['sandbox']['businessUnitMid'])
+          definitions = sorted(root.glob('*/definition.json'))
+          if not definitions:
+              fail('No approved DE definitions available to verify')
+          for key in ('SFMC_AUTH_BASE_URI', 'SFMC_CLIENT_ID', 'SFMC_CLIENT_SECRET'):
+              if not os.getenv(key):
+                  fail(f'Missing GitHub secret: {key}')
+          base = os.environ['SFMC_AUTH_BASE_URI'].rstrip('/')
+          if not base.startswith('https://'):
+              fail('SFMC_AUTH_BASE_URI must use HTTPS')
+          body = json.dumps({'grant_type':'client_credentials',
+                             'client_id':os.environ['SFMC_CLIENT_ID'],
+                             'client_secret':os.environ['SFMC_CLIENT_SECRET'],
+                             'account_id':int(mid)}).encode()
+          request = urllib.request.Request(base + '/v2/token', body,
+                      {'Content-Type':'application/json'}, method='POST')
+          try:
+              with urllib.request.urlopen(request, timeout=40) as response:
+                  auth = json.load(response)
+          except (urllib.error.URLError, ValueError) as exc:
+              fail(f'Sandbox authentication failed ({type(exc).__name__}); check credentials and API access')
+          token = auth.get('access_token')
+          soap_base = auth.get('soap_instance_url', '').rstrip('/')
+          if not token or not soap_base.startswith('https://'):
+              fail('SFMC OAuth response lacks valid token or SOAP endpoint')
+          print('::add-mask::' + token)
+          API = 'http://exacttarget.com/wsdl/partnerAPI'
+          SOAP = 'http://schemas.xmlsoap.org/soap/envelope/'
+          XSI = 'http://www.w3.org/2001/XMLSchema-instance'
+          def esc(value):
+              return html.escape(str(value), quote=True)
+          def soap(action, content):
+              envelope = (f'<soap:Envelope xmlns:soap="{SOAP}" xmlns:xsi="{XSI}">'
+                          f'<soap:Header><fueloauth xmlns="{API}">{esc(token)}</fueloauth></soap:Header>'
+                          f'<soap:Body>{content}</soap:Body></soap:Envelope>').encode()
+              request = urllib.request.Request(soap_base + '/Service.asmx', envelope,
+                  {'Content-Type':'text/xml; charset=UTF-8', 'SOAPAction':f'"{action}"'}, method='POST')
+              try:
+                  with urllib.request.urlopen(request, timeout=60) as response:
+                      result = ET.fromstring(response.read())
+              except (urllib.error.URLError, ET.ParseError) as exc:
+                  raise RuntimeError(f'SFMC SOAP {action} failed ({type(exc).__name__})') from exc
+              if any(node.tag.split('}')[-1] == 'Fault' for node in result.iter()):
+                  raise RuntimeError(f'SFMC SOAP {action} returned a fault')
+              status = next((n.text for n in result.iter() if n.tag.split('}')[-1]=='OverallStatus'), None)
+              if status != 'OK':
+                  raise RuntimeError(f'SFMC SOAP {action} unexpected status: {status}')
+              return result
+          def value(node, name):
+              return next((n.text for n in node if n.tag.split('}')[-1]==name), None)
+          def results(root):
+              return [n for n in root.iter() if n.tag.split('}')[-1]=='Results']
+          def retrieve(obj, props, filter_property, key):
+              xmlprops = ''.join(f'<Properties>{esc(p)}</Properties>' for p in props)
+              content = (f'<RetrieveRequestMsg xmlns="{API}"><RetrieveRequest>'
+                         f'<ObjectType>{obj}</ObjectType>{xmlprops}'
+                         f'<Filter xsi:type="SimpleFilterPart"><Property>{filter_property}</Property>'
+                         f'<SimpleOperator>equals</SimpleOperator><Value>{esc(key)}</Value>'
+                         f'</Filter></RetrieveRequest></RetrieveRequestMsg>')
+              return results(soap('Retrieve', content))
+          desired_props = ['ObjectID','Name','FieldType','MaxLength','IsPrimaryKey',
+                           'IsRequired','DefaultValue','Ordinal','Precision','Scale']
+          describe = soap('Describe', f'<DefinitionRequestMsg xmlns="{API}"><DescribeRequests>'
+                                  '<ObjectDefinitionRequest><ObjectType>DataExtensionField</ObjectType>'
+                                  '</ObjectDefinitionRequest></DescribeRequests></DefinitionRequestMsg>')
+          supported = set()
+          for node in describe.iter():
+              if node.tag.split('}')[-1]=='Properties':
+                  if (value(node,'IsRetrievable') or '').lower()=='true':
+                      supported.add(value(node,'Name'))
+          required = {'ObjectID','Name','FieldType','IsPrimaryKey','IsRequired','Ordinal'}
+          if not required <= supported:
+              fail('Sandbox API does not expose required DE field properties: ' + ', '.join(sorted(required-supported)))
+          props = [p for p in desired_props if p in supported]
+          def boolean(v): return (v or '').lower()=='true'
+          def integer(v): return None if v in (None,'') else int(v)
+          def normalize_field(f):
+              return {k:f.get(k) for k in ('name','fieldType','maxLength','isPrimaryKey',
+                                            'isRequired','defaultValue','ordinal','precision','scale')}
+          mismatches = []
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              summary.write('## Sandbox metadata synchronization verification (read-only)\n\n')
+              summary.write(f'Sandbox BU MID: `{mid}`\n\n| Customer Key | Result |\n|---|---|\n')
+              for path in definitions:
+                  desired = json.loads(path.read_text())
+                  key = desired['customerKey']
+                  try:
+                      found = retrieve('DataExtension', ['ObjectID','CustomerKey','Name','Description',
+                                      'IsSendable','IsTestable'], 'CustomerKey', key)
+                      found = [r for r in found if value(r,'CustomerKey')==key]
+                      if len(found)!=1:
+                          raise RuntimeError('Missing or ambiguous DE in Sandbox')
+                      de = found[0]
+                      fields = retrieve('DataExtensionField', props, 'DataExtension.CustomerKey', key)
+                      actual_fields = []
+                      for f in fields:
+                          actual_fields.append({'name':value(f,'Name'), 'fieldType':value(f,'FieldType'),
+                              'maxLength':integer(value(f,'MaxLength')),
+                              'isPrimaryKey':boolean(value(f,'IsPrimaryKey')),
+                              'isRequired':boolean(value(f,'IsRequired')),
+                              'defaultValue':value(f,'DefaultValue'),
+                              'ordinal':integer(value(f,'Ordinal')),
+                              'precision':integer(value(f,'Precision')),
+                              'scale':integer(value(f,'Scale'))})
+                      def sort_fields(items):
+                          return sorted(items, key=lambda f:(f['ordinal'] is None,
+                                          f['ordinal'] if f['ordinal'] is not None else 0,f['name']))
+                      expected_fields = []
+                      for i, f in enumerate(desired['fields']):
+                          field = normalize_field(f)
+                          field['ordinal'] = f.get('ordinal',i)
+                          field['isPrimaryKey'] = bool(f.get('isPrimaryKey',False))
+                          field['isRequired'] = bool(f.get('isRequired',False))
+                          expected_fields.append(field)
+                      expected = {'name':desired['name'], 'description':desired.get('description') or '',
+                                  'isSendable':bool(desired.get('isSendable',False)),
+                                  'isTestable':bool(desired.get('isTestable',False)),
+                                  'fields':sort_fields(expected_fields)}
+                      actual = {'name':value(de,'Name'), 'description':value(de,'Description') or '',
+                                'isSendable':boolean(value(de,'IsSendable')),
+                                'isTestable':boolean(value(de,'IsTestable')),
+                                'fields':sort_fields(actual_fields)}
+                      if actual != expected:
+                          raise RuntimeError('Metadata differs from GitHub sandbox definition')
+                      print(f'PASS: {key} matches Sandbox')
+                      summary.write(f'| `{key}` | PASS |\n')
+                  except Exception as exc:
+                      mismatches.append(key)
+                      print(f'::error::{key}: {exc}')
+                      summary.write(f'| `{key}` | FAIL: {str(exc).replace("|","/")} |\n')
+              summary.write('\nNo Sandbox assets or GitHub definitions were modified.\n')
+          if mismatches:
+              fail(f'{len(mismatches)} DE(s) differ from Sandbox or could not be verified. Review before merging to main.')
+          print(f'All {len(definitions)} tracked DEs match SFMC Sandbox')
+          PYSYNC
+
   retrieve-from-sandbox:
     if: github.event_name == 'workflow_dispatch' 
     name: Retrieve Sandbox Asset
