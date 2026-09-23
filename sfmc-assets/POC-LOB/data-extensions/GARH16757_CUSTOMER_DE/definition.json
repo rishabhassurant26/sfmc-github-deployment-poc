@@ -2,7 +2,7 @@
   "assetType": "DataExtension",
   "name": "GARH16757_CUSTOMER_DE",
   "customerKey": "GARH16757_CUSTOMER_DE",
-  "description": "Data Extension deployed through GitHub CI/CD POC GARH-16757",
+  "description": "Automated GitHub CI CD Deployment POC",
   "isSendable": false,
   "isTestable": false,
   "fields": [
