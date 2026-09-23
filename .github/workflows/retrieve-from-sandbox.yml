@@ -188,8 +188,14 @@ jobs:
               if any(node.tag.split('}')[-1] == 'Fault' for node in result.iter()):
                   raise RuntimeError(f'SFMC SOAP {action} returned a fault')
               status = next((n.text for n in result.iter() if n.tag.split('}')[-1]=='OverallStatus'), None)
-              if status != 'OK':
+              # DescribeResponseMsg typically has ObjectDefinition, not OverallStatus.
+              # RetrieveResponseMsg supplies OverallStatus and must be checked.
+              if action == 'Retrieve' and status not in ('OK', 'Has More Rows'):
                   raise RuntimeError(f'SFMC SOAP {action} unexpected status: {status}')
+              if action == 'Describe' and not any(
+                  node.tag.split('}')[-1] == 'ObjectDefinition' for node in result.iter()
+              ):
+                  raise RuntimeError('SFMC SOAP Describe returned no ObjectDefinition')
               return result
           def value(node, name):
               return next((n.text for n in node if n.tag.split('}')[-1]==name), None)
