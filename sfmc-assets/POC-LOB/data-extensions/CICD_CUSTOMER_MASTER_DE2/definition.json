@@ -53,7 +53,7 @@
     {
       "name": "Test_Field",
       "fieldType": "Text",
-      "maxLength": 51,
+      "maxLength": 50,
       "isPrimaryKey": false,
       "isRequired": false,
       "defaultValue": null,
