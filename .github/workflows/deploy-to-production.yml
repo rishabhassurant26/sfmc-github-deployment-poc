@@ -1,0 +1,970 @@
+name: Deploy SFMC Assets to Production
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "sfmc-assets/**"
+  workflow_dispatch:
+permissions:
+  contents: read
+
+concurrency:
+  group: sfmc-production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy-data-extensions:
+    name: Deploy Data Extensions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout approved main branch
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Validate configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONFIG_FILE="config/lob-config.json"
+
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "::error::Missing configuration file: $CONFIG_FILE"
+            exit 1
+          fi
+
+          jq -e . "$CONFIG_FILE" > /dev/null
+
+          SCHEMA_VERSION=$(jq -r '.schemaVersion // empty' "$CONFIG_FILE")
+          LOB=$(jq -r '.lineOfBusiness // empty' "$CONFIG_FILE")
+          ASSET_ROOT=$(jq -r '.assetRoot // empty' "$CONFIG_FILE")
+          PRODUCTION_MID=$(jq -r '.environments.production.businessUnitMid // empty' "$CONFIG_FILE")
+
+          DE_ENABLED=$(jq -r '.assetTypes.dataExtensions.enabled // false' "$CONFIG_FILE")
+          DE_DIRECTORY=$(jq -r '.assetTypes.dataExtensions.directory // empty' "$CONFIG_FILE")
+
+          if [ -z "$SCHEMA_VERSION" ]; then
+            echo "::error::schemaVersion is missing."
+            exit 1
+          fi
+
+          if [ -z "$LOB" ]; then
+            echo "::error::lineOfBusiness is missing."
+            exit 1
+          fi
+
+          if [ -z "$ASSET_ROOT" ]; then
+            echo "::error::assetRoot is missing."
+            exit 1
+          fi
+
+          if [ -z "$PRODUCTION_MID" ]; then
+            echo "::error::Production businessUnitMid is missing."
+            exit 1
+          fi
+
+          if ! [[ "$PRODUCTION_MID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Production businessUnitMid must be numeric."
+            exit 1
+          fi
+
+          if [ "$DE_ENABLED" != "true" ]; then
+            echo "::error::Data Extension deployment is disabled in configuration."
+            exit 1
+          fi
+
+          if [ -z "$DE_DIRECTORY" ]; then
+            echo "::error::Data Extension directory is missing."
+            exit 1
+          fi
+
+          DE_ROOT="${ASSET_ROOT}/${LOB}/${DE_DIRECTORY}"
+
+          if [ ! -d "$DE_ROOT" ]; then
+            echo "::error::Approved Data Extension directory does not exist: $DE_ROOT"
+            exit 1
+          fi
+
+          echo "lob=$LOB" >> "$GITHUB_OUTPUT"
+          echo "asset_root=$ASSET_ROOT" >> "$GITHUB_OUTPUT"
+          echo "production_mid=$PRODUCTION_MID" >> "$GITHUB_OUTPUT"
+          echo "de_directory=$DE_DIRECTORY" >> "$GITHUB_OUTPUT"
+          echo "de_root=$DE_ROOT" >> "$GITHUB_OUTPUT"
+
+          echo "Configuration validated."
+          echo "LOB: $LOB"
+          echo "POC production target BU MID: $PRODUCTION_MID"
+          echo "Data Extension root: $DE_ROOT"
+
+      - name: Validate SFMC credentials
+        shell: bash
+        env:
+          SFMC_AUTH_BASE_URI: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          SFMC_CLIENT_ID: ${{ secrets.SFMC_CLIENT_ID }}
+          SFMC_CLIENT_SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SFMC_AUTH_BASE_URI:-}" ]; then
+            echo "::error::SFMC_AUTH_BASE_URI secret is missing."
+            exit 1
+          fi
+
+          if [ -z "${SFMC_CLIENT_ID:-}" ]; then
+            echo "::error::SFMC_CLIENT_ID secret is missing."
+            exit 1
+          fi
+
+          if [ -z "${SFMC_CLIENT_SECRET:-}" ]; then
+            echo "::error::SFMC_CLIENT_SECRET secret is missing."
+            exit 1
+          fi
+
+      - name: Discover and validate approved Data Extensions
+        id: discover
+        shell: bash
+        env:
+          DE_ROOT: ${{ steps.config.outputs.de_root }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t DEFINITIONS < <(
+            find "$DE_ROOT" \
+              -mindepth 2 \
+              -maxdepth 2 \
+              -type f \
+              -name 'definition.json' \
+              -print | sort
+          )
+
+          if [ "${#DEFINITIONS[@]}" -eq 0 ]; then
+            echo "::error::No approved Data Extension definitions found."
+            exit 1
+          fi
+
+          : > /tmp/de-definitions.txt
+
+          for FILE in "${DEFINITIONS[@]}"; do
+            jq -e . "$FILE" > /dev/null
+
+            ASSET_TYPE=$(jq -r '.assetType // empty' "$FILE")
+            NAME=$(jq -r '.name // empty' "$FILE")
+            CUSTOMER_KEY=$(jq -r '.customerKey // empty' "$FILE")
+            FIELD_COUNT=$(jq '.fields | if type == "array" then length else 0 end' "$FILE")
+
+            DIRECTORY_NAME=$(basename "$(dirname "$FILE")")
+
+            if [ "$ASSET_TYPE" != "DataExtension" ]; then
+              echo "::error file=$FILE::assetType must be DataExtension."
+              exit 1
+            fi
+
+            if [ -z "$NAME" ]; then
+              echo "::error file=$FILE::Data Extension name is missing."
+              exit 1
+            fi
+
+            if [ -z "$CUSTOMER_KEY" ]; then
+              echo "::error file=$FILE::Data Extension customerKey is missing."
+              exit 1
+            fi
+
+            if [ "$DIRECTORY_NAME" != "$CUSTOMER_KEY" ]; then
+              echo "::error file=$FILE::Directory name must match customerKey."
+              exit 1
+            fi
+
+            if [ "$FIELD_COUNT" -lt 1 ]; then
+              echo "::error file=$FILE::Data Extension must contain at least one field."
+              exit 1
+            fi
+
+            DUPLICATE_FIELD_NAMES=$(jq -r '
+              [.fields[].name]
+              | group_by(.)
+              | map(select(length > 1))
+              | flatten
+              | unique
+              | join(",")
+            ' "$FILE")
+
+            if [ -n "$DUPLICATE_FIELD_NAMES" ]; then
+              echo "::error file=$FILE::Duplicate field names: $DUPLICATE_FIELD_NAMES"
+              exit 1
+            fi
+
+            IS_SENDABLE=$(jq -r '.isSendable // false' "$FILE")
+
+            if [ "$IS_SENDABLE" = "true" ]; then
+              echo "::error file=$FILE::Sendable Data Extension deployment requires sendable field mapping metadata. Current definition does not contain that mapping."
+              exit 1
+            fi
+
+            echo "$FILE" >> /tmp/de-definitions.txt
+            echo "Approved DE: $CUSTOMER_KEY"
+          done
+
+          COUNT="${#DEFINITIONS[@]}"
+
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+          echo "Approved Data Extensions discovered: $COUNT"
+
+      - name: Authenticate to POC production target BU
+        id: auth
+        shell: bash
+        env:
+          SFMC_AUTH_BASE_URI: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          SFMC_CLIENT_ID: ${{ secrets.SFMC_CLIENT_ID }}
+          SFMC_CLIENT_SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+          PRODUCTION_MID: ${{ steps.config.outputs.production_mid }}
+        run: |
+          set -euo pipefail
+
+          AUTH_BASE_URI="${SFMC_AUTH_BASE_URI%/}"
+
+          HTTP_CODE=$(curl \
+            --silent \
+            --show-error \
+            --output /tmp/token-response.json \
+            --write-out "%{http_code}" \
+            --request POST \
+            "${AUTH_BASE_URI}/v2/token" \
+            --header "Content-Type: application/json" \
+            --data "$(jq -n \
+              --arg client_id "$SFMC_CLIENT_ID" \
+              --arg client_secret "$SFMC_CLIENT_SECRET" \
+              --arg account_id "$PRODUCTION_MID" \
+              '{
+                grant_type: "client_credentials",
+                client_id: $client_id,
+                client_secret: $client_secret,
+                account_id: ($account_id | tonumber)
+              }'
+            )")
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::SFMC authentication failed with HTTP $HTTP_CODE."
+            jq -r '.message // .error_description // .error // "Unknown authentication error"' \
+              /tmp/token-response.json
+            exit 1
+          fi
+
+          ACCESS_TOKEN=$(jq -r '.access_token // empty' /tmp/token-response.json)
+          SOAP_INSTANCE_URL=$(jq -r '.soap_instance_url // empty' /tmp/token-response.json)
+
+          if [ -z "$ACCESS_TOKEN" ]; then
+            echo "::error::OAuth response did not contain access_token."
+            exit 1
+          fi
+
+          if [ -z "$SOAP_INSTANCE_URL" ]; then
+            echo "::error::OAuth response did not contain soap_instance_url."
+            exit 1
+          fi
+
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          printf '%s' "$ACCESS_TOKEN" > /tmp/sfmc-access-token
+          printf '%s' "${SOAP_INSTANCE_URL%/}" > /tmp/sfmc-soap-url
+
+          echo "SFMC authentication successful."
+          echo "POC production target BU MID: $PRODUCTION_MID"
+
+      - name: Deploy approved Data Extensions
+        id: deploy
+        shell: bash
+        env:
+          PRODUCTION_MID: ${{ steps.config.outputs.production_mid }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import os
+          import sys
+          import html
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          ACCESS_TOKEN = Path("/tmp/sfmc-access-token").read_text().strip()
+          SOAP_URL = Path("/tmp/sfmc-soap-url").read_text().strip() + "/Service.asmx"
+          DEFINITION_FILES = [
+              Path(line.strip())
+              for line in Path("/tmp/de-definitions.txt").read_text().splitlines()
+              if line.strip()
+          ]
+
+          SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
+          API_NS = "http://exacttarget.com/wsdl/partnerAPI"
+          XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
+
+          ET.register_namespace("soap", SOAP_NS)
+          ET.register_namespace("xsi", XSI_NS)
+
+          def esc(value):
+              return html.escape(str(value), quote=True)
+
+          def bool_text(value):
+              return "true" if bool(value) else "false"
+
+          def soap_call(action, body):
+              envelope = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soap:Envelope xmlns:soap="{SOAP_NS}"
+                         xmlns:xsi="{XSI_NS}"
+                         xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+            <soap:Header>
+              <fueloauth xmlns="{API_NS}">{esc(ACCESS_TOKEN)}</fueloauth>
+            </soap:Header>
+            <soap:Body>
+              {body}
+            </soap:Body>
+          </soap:Envelope>"""
+
+              request = urllib.request.Request(
+                  SOAP_URL,
+                  data=envelope.encode("utf-8"),
+                  method="POST",
+                  headers={
+                      "Content-Type": "text/xml; charset=UTF-8",
+                      "SOAPAction": f'"{action}"',
+                  },
+              )
+
+              try:
+                  with urllib.request.urlopen(request, timeout=60) as response:
+                      payload = response.read()
+              except urllib.error.HTTPError as exc:
+                  payload = exc.read()
+                  raise RuntimeError(
+                      f"SOAP {action} failed with HTTP {exc.code}: "
+                      f"{payload.decode('utf-8', errors='replace')}"
+                  ) from exc
+
+              root = ET.fromstring(payload)
+
+              fault = root.find(f".//{{{SOAP_NS}}}Fault")
+              if fault is not None:
+                  fault_string = fault.findtext("faultstring") or "Unknown SOAP fault"
+                  raise RuntimeError(f"SOAP {action} fault: {fault_string}")
+
+              return root
+
+          def text_of(parent, local_name):
+              if parent is None:
+                  return None
+
+              for child in parent.iter():
+                  if child.tag.split("}")[-1] == local_name:
+                      return child.text
+              return None
+
+          def retrieve_de(customer_key):
+              body = f"""
+          <RetrieveRequestMsg xmlns="{API_NS}">
+            <RetrieveRequest>
+              <ObjectType>DataExtension</ObjectType>
+              <Properties>ObjectID</Properties>
+              <Properties>CustomerKey</Properties>
+              <Properties>Name</Properties>
+              <Properties>Description</Properties>
+              <Properties>IsSendable</Properties>
+              <Properties>IsTestable</Properties>
+              <Filter xsi:type="SimpleFilterPart">
+                <Property>CustomerKey</Property>
+                <SimpleOperator>equals</SimpleOperator>
+                <Value>{esc(customer_key)}</Value>
+              </Filter>
+            </RetrieveRequest>
+          </RetrieveRequestMsg>
+          """
+
+              root = soap_call("Retrieve", body)
+
+              status = text_of(root, "OverallStatus") or ""
+              if status not in ("OK", "Has More Rows"):
+                  raise RuntimeError(
+                      f"{customer_key}: DataExtension retrieve failed: {status}"
+                  )
+
+              results = [
+                  node for node in root.iter()
+                  if node.tag.split("}")[-1] == "Results"
+              ]
+
+              matching = []
+              for result in results:
+                  result_key = text_of(result, "CustomerKey")
+                  if result_key == customer_key:
+                      matching.append(result)
+
+              if not matching:
+                  return None
+
+              if len(matching) > 1:
+                  raise RuntimeError(
+                      f"{customer_key}: multiple DataExtensions returned for one CustomerKey."
+                  )
+
+              result = matching[0]
+
+              return {
+                  "objectId": text_of(result, "ObjectID"),
+                  "customerKey": text_of(result, "CustomerKey"),
+                  "name": text_of(result, "Name"),
+                  "description": text_of(result, "Description") or "",
+                  "isSendable": (text_of(result, "IsSendable") or "").lower() == "true",
+                  "isTestable": (text_of(result, "IsTestable") or "").lower() == "true",
+              }
+
+          def describe_de_fields():
+              body = f"""
+          <DefinitionRequestMsg xmlns="{API_NS}">
+            <DescribeRequests>
+              <ObjectDefinitionRequest>
+                <ObjectType>DataExtensionField</ObjectType>
+              </ObjectDefinitionRequest>
+            </DescribeRequests>
+          </DefinitionRequestMsg>
+          """
+
+              root = soap_call("Describe", body)
+
+              desired = [
+                  "ObjectID",
+                  "CustomerKey",
+                  "Name",
+                  "FieldType",
+                  "MaxLength",
+                  "IsPrimaryKey",
+                  "IsRequired",
+                  "DefaultValue",
+                  "Ordinal",
+                  "Precision",
+                  "Scale",
+              ]
+
+              retrievable = set()
+
+              for prop in root.iter():
+                  if prop.tag.split("}")[-1] != "Properties":
+                      continue
+
+                  name = text_of(prop, "Name")
+                  is_retrievable = (
+                      text_of(prop, "IsRetrievable") or ""
+                  ).lower() == "true"
+
+                  if name and is_retrievable:
+                      retrievable.add(name)
+
+              required = {
+                  "ObjectID",
+                  "Name",
+                  "FieldType",
+                  "IsPrimaryKey",
+                  "IsRequired",
+                  "Ordinal",
+              }
+
+              missing = sorted(required - retrievable)
+              if missing:
+                  raise RuntimeError(
+                      "DataExtensionField Describe does not expose required "
+                      f"retrievable properties: {', '.join(missing)}"
+                  )
+
+              return [name for name in desired if name in retrievable]
+
+          FIELD_PROPERTIES = describe_de_fields()
+
+          def retrieve_fields(customer_key):
+              properties_xml = "\n".join(
+                  f"<Properties>{esc(prop)}</Properties>"
+                  for prop in FIELD_PROPERTIES
+              )
+
+              body = f"""
+          <RetrieveRequestMsg xmlns="{API_NS}">
+            <RetrieveRequest>
+              <ObjectType>DataExtensionField</ObjectType>
+              {properties_xml}
+              <Filter xsi:type="SimpleFilterPart">
+                <Property>DataExtension.CustomerKey</Property>
+                <SimpleOperator>equals</SimpleOperator>
+                <Value>{esc(customer_key)}</Value>
+              </Filter>
+            </RetrieveRequest>
+          </RetrieveRequestMsg>
+          """
+
+              root = soap_call("Retrieve", body)
+
+              status = text_of(root, "OverallStatus") or ""
+              if status not in ("OK", "Has More Rows"):
+                  raise RuntimeError(
+                      f"{customer_key}: DataExtensionField retrieve failed: {status}"
+                  )
+
+              fields = []
+
+              for result in root.iter():
+                  if result.tag.split("}")[-1] != "Results":
+                      continue
+
+                  name = text_of(result, "Name")
+                  field_type = text_of(result, "FieldType")
+
+                  if not name or not field_type:
+                      continue
+
+                  def int_or_none(value):
+                      if value is None or value == "":
+                          return None
+                      return int(value)
+
+                  fields.append({
+                      "objectId": text_of(result, "ObjectID"),
+                      "name": name,
+                      "fieldType": field_type,
+                      "maxLength": int_or_none(text_of(result, "MaxLength")),
+                      "isPrimaryKey": (
+                          text_of(result, "IsPrimaryKey") or ""
+                      ).lower() == "true",
+                      "isRequired": (
+                          text_of(result, "IsRequired") or ""
+                      ).lower() == "true",
+                      "defaultValue": text_of(result, "DefaultValue"),
+                      "ordinal": int_or_none(text_of(result, "Ordinal")),
+                      "precision": int_or_none(text_of(result, "Precision")),
+                      "scale": int_or_none(text_of(result, "Scale")),
+                  })
+
+              fields.sort(
+                  key=lambda field: (
+                      field["ordinal"] is None,
+                      field["ordinal"] if field["ordinal"] is not None else 0,
+                      field["name"],
+                  )
+              )
+
+              return fields
+
+          def normalized_desired(definition):
+              fields = []
+
+              for index, field in enumerate(definition["fields"]):
+                  fields.append({
+                      "name": field["name"],
+                      "fieldType": field["fieldType"],
+                      "maxLength": field.get("maxLength"),
+                      "isPrimaryKey": bool(field.get("isPrimaryKey", False)),
+                      "isRequired": bool(field.get("isRequired", False)),
+                      "defaultValue": field.get("defaultValue"),
+                      "ordinal": field.get("ordinal", index),
+                      "precision": field.get("precision"),
+                      "scale": field.get("scale"),
+                  })
+
+              fields.sort(
+                  key=lambda field: (
+                      field["ordinal"] is None,
+                      field["ordinal"] if field["ordinal"] is not None else 0,
+                      field["name"],
+                  )
+              )
+
+              return {
+                  "name": definition["name"],
+                  "customerKey": definition["customerKey"],
+                  "description": definition.get("description") or "",
+                  "isSendable": bool(definition.get("isSendable", False)),
+                  "isTestable": bool(definition.get("isTestable", False)),
+                  "fields": fields,
+              }
+
+          def normalized_actual(de, fields):
+              return {
+                  "name": de["name"],
+                  "customerKey": de["customerKey"],
+                  "description": de.get("description") or "",
+                  "isSendable": bool(de.get("isSendable", False)),
+                  "isTestable": bool(de.get("isTestable", False)),
+                  "fields": [
+                      {
+                          key: field.get(key)
+                          for key in (
+                              "name",
+                              "fieldType",
+                              "maxLength",
+                              "isPrimaryKey",
+                              "isRequired",
+                              "defaultValue",
+                              "ordinal",
+                              "precision",
+                              "scale",
+                          )
+                      }
+                      for field in fields
+                  ],
+              }
+
+          def field_xml(field, include_object_id=False):
+              parts = ["<Fields>"]
+
+              if include_object_id:
+                  object_id = field.get("objectId")
+                  if not object_id:
+                      raise RuntimeError(
+                          f"Missing ObjectID for existing field {field['name']}."
+                      )
+                  parts.append(f"<ObjectID>{esc(object_id)}</ObjectID>")
+
+              parts.append(f"<Name>{esc(field['name'])}</Name>")
+              parts.append(f"<FieldType>{esc(field['fieldType'])}</FieldType>")
+
+              if field.get("maxLength") is not None:
+                  parts.append(f"<MaxLength>{int(field['maxLength'])}</MaxLength>")
+
+              parts.append(
+                  f"<IsPrimaryKey>{bool_text(field.get('isPrimaryKey', False))}</IsPrimaryKey>"
+              )
+              parts.append(
+                  f"<IsRequired>{bool_text(field.get('isRequired', False))}</IsRequired>"
+              )
+
+              if field.get("defaultValue") is not None:
+                  parts.append(
+                      f"<DefaultValue>{esc(field['defaultValue'])}</DefaultValue>"
+                  )
+
+              if field.get("ordinal") is not None:
+                  parts.append(f"<Ordinal>{int(field['ordinal'])}</Ordinal>")
+
+              if field.get("precision") is not None:
+                  parts.append(f"<Precision>{int(field['precision'])}</Precision>")
+
+              if field.get("scale") is not None:
+                  parts.append(f"<Scale>{int(field['scale'])}</Scale>")
+
+              parts.append("</Fields>")
+              return "".join(parts)
+
+          def check_update_safety(desired, actual_fields):
+              desired_by_name = {
+                  field["name"]: field
+                  for field in desired["fields"]
+              }
+              actual_by_name = {
+                  field["name"]: field
+                  for field in actual_fields
+              }
+
+              removed = sorted(set(actual_by_name) - set(desired_by_name))
+              if removed:
+                  return False, (
+                      "GitHub definition removes existing Production field(s): "
+                      + ", ".join(removed)
+                  )
+
+              for name in sorted(set(actual_by_name) & set(desired_by_name)):
+                  old = actual_by_name[name]
+                  new = desired_by_name[name]
+
+                  if old["fieldType"] != new["fieldType"]:
+                      return False, (
+                          f"Field {name}: fieldType change "
+                          f"{old['fieldType']} -> {new['fieldType']} is blocked."
+                      )
+
+                  if bool(old["isPrimaryKey"]) != bool(new["isPrimaryKey"]):
+                      return False, (
+                          f"Field {name}: primary-key change is blocked."
+                      )
+
+                  old_length = old.get("maxLength")
+                  new_length = new.get("maxLength")
+
+                  if (
+                      old_length is not None
+                      and new_length is not None
+                      and new_length < old_length
+                  ):
+                      return False, (
+                          f"Field {name}: MaxLength reduction "
+                          f"{old_length} -> {new_length} is blocked."
+                      )
+
+                  if (
+                      not bool(old["isRequired"])
+                      and bool(new["isRequired"])
+                  ):
+                      return False, (
+                          f"Field {name}: optional -> required change is blocked."
+                      )
+
+              new_fields = sorted(set(desired_by_name) - set(actual_by_name))
+
+              for name in new_fields:
+                  field = desired_by_name[name]
+
+                  if bool(field.get("isPrimaryKey")):
+                      return False, (
+                          f"New field {name}: adding a new primary-key field "
+                          "to an existing DE is blocked."
+                      )
+
+                  if (
+                      bool(field.get("isRequired"))
+                      and field.get("defaultValue") in (None, "")
+                  ):
+                      return False, (
+                          f"New field {name}: required field without a default "
+                          "value is blocked for an existing DE."
+                      )
+
+              return True, ""
+
+          def create_de(desired):
+              fields = "".join(field_xml(field) for field in desired["fields"])
+
+              body = f"""
+          <CreateRequest xmlns="{API_NS}">
+            <Options />
+            <Objects xsi:type="DataExtension">
+              <CustomerKey>{esc(desired['customerKey'])}</CustomerKey>
+              <Name>{esc(desired['name'])}</Name>
+              <Description>{esc(desired['description'])}</Description>
+              <IsSendable>{bool_text(desired['isSendable'])}</IsSendable>
+              <IsTestable>{bool_text(desired['isTestable'])}</IsTestable>
+              {fields}
+            </Objects>
+          </CreateRequest>
+          """
+
+              root = soap_call("Create", body)
+
+              status = text_of(root, "OverallStatus") or ""
+              if status not in ("OK", "Has Error"):
+                  raise RuntimeError(
+                      f"{desired['customerKey']}: unexpected Create status: {status}"
+                  )
+
+              errors = []
+              for result in root.iter():
+                  if result.tag.split("}")[-1] != "Results":
+                      continue
+                  result_status = text_of(result, "StatusCode")
+                  if result_status and result_status != "OK":
+                      errors.append(
+                          text_of(result, "StatusMessage") or result_status
+                      )
+
+              if errors:
+                  raise RuntimeError(
+                      f"{desired['customerKey']}: Create failed: "
+                      + " | ".join(errors)
+                  )
+
+          def update_de(desired, actual_de, actual_fields):
+              actual_by_name = {
+                  field["name"]: field
+                  for field in actual_fields
+              }
+
+              fields_xml = []
+
+              for desired_field in desired["fields"]:
+                  existing = actual_by_name.get(desired_field["name"])
+
+                  if existing:
+                      merged = dict(desired_field)
+                      merged["objectId"] = existing["objectId"]
+                      fields_xml.append(
+                          field_xml(merged, include_object_id=True)
+                      )
+                  else:
+                      fields_xml.append(field_xml(desired_field))
+
+              body = f"""
+          <UpdateRequest xmlns="{API_NS}">
+            <Options />
+            <Objects xsi:type="DataExtension">
+              <ObjectID>{esc(actual_de['objectId'])}</ObjectID>
+              <CustomerKey>{esc(desired['customerKey'])}</CustomerKey>
+              <Name>{esc(desired['name'])}</Name>
+              <Description>{esc(desired['description'])}</Description>
+              <IsSendable>{bool_text(desired['isSendable'])}</IsSendable>
+              <IsTestable>{bool_text(desired['isTestable'])}</IsTestable>
+              {''.join(fields_xml)}
+            </Objects>
+          </UpdateRequest>
+          """
+
+              root = soap_call("Update", body)
+
+              status = text_of(root, "OverallStatus") or ""
+              if status not in ("OK", "Has Error"):
+                  raise RuntimeError(
+                      f"{desired['customerKey']}: unexpected Update status: {status}"
+                  )
+
+              errors = []
+              for result in root.iter():
+                  if result.tag.split("}")[-1] != "Results":
+                      continue
+                  result_status = text_of(result, "StatusCode")
+                  if result_status and result_status != "OK":
+                      errors.append(
+                          text_of(result, "StatusMessage") or result_status
+                      )
+
+              if errors:
+                  raise RuntimeError(
+                      f"{desired['customerKey']}: Update failed: "
+                      + " | ".join(errors)
+                  )
+
+          results = []
+          failed = False
+
+          for definition_file in DEFINITION_FILES:
+              definition = json.loads(definition_file.read_text())
+              desired = normalized_desired(definition)
+              customer_key = desired["customerKey"]
+
+              action = None
+              verification = "NOT RUN"
+              detail = ""
+
+              try:
+                  if desired["isSendable"]:
+                      raise RuntimeError(
+                          "Sendable DE deployment is blocked until sendable "
+                          "field relationship metadata is version-controlled."
+                      )
+
+                  existing = retrieve_de(customer_key)
+
+                  if existing is None:
+                      create_de(desired)
+                      action = "CREATE"
+
+                  else:
+                      production_fields = retrieve_fields(customer_key)
+                      actual = normalized_actual(existing, production_fields)
+
+                      if actual == desired:
+                          action = "SKIP"
+                      else:
+                          safe, reason = check_update_safety(
+                              desired,
+                              production_fields,
+                          )
+
+                          if not safe:
+                              raise RuntimeError(reason)
+
+                          update_de(
+                              desired,
+                              existing,
+                              production_fields,
+                          )
+                          action = "UPDATE"
+
+                  verified_de = retrieve_de(customer_key)
+
+                  if verified_de is None:
+                      raise RuntimeError(
+                          "Post-deployment verification could not find the DE."
+                      )
+
+                  verified_fields = retrieve_fields(customer_key)
+                  verified = normalized_actual(
+                      verified_de,
+                      verified_fields,
+                  )
+
+                  if verified != desired:
+                      raise RuntimeError(
+                          "Post-deployment Production definition does not "
+                          "match GitHub main."
+                      )
+
+                  verification = "PASS"
+
+              except Exception as exc:
+                  action = action or "FAIL"
+                  verification = "FAIL"
+                  detail = str(exc)
+                  failed = True
+
+              results.append({
+                  "customerKey": customer_key,
+                  "action": action,
+                  "verification": verification,
+                  "detail": detail,
+              })
+
+          Path("/tmp/deployment-results.json").write_text(
+              json.dumps(results, indent=2)
+          )
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("# SFMC Production Deployment Summary\n\n")
+              summary.write(
+                  f"**POC production target BU MID:** "
+                  f"`{os.environ['PRODUCTION_MID']}`\n\n"
+              )
+              summary.write("| Customer Key | Action | Verification | Details |\n")
+              summary.write("|---|---|---|---|\n")
+
+              for result in results:
+                  detail = result["detail"].replace("|", "\\|").replace("\n", " ")
+                  summary.write(
+                      f"| `{result['customerKey']}` "
+                      f"| **{result['action']}** "
+                      f"| **{result['verification']}** "
+                      f"| {detail or '-'} |\n"
+                  )
+
+          for result in results:
+              print(
+                  f"{result['customerKey']}: "
+                  f"{result['action']} / {result['verification']}"
+              )
+              if result["detail"]:
+                  print(f"  {result['detail']}")
+
+          if failed:
+              sys.exit(1)
+          PY
+
+      - name: Final deployment status
+        if: success()
+        shell: bash
+        env:
+          LOB: ${{ steps.config.outputs.lob }}
+          PRODUCTION_MID: ${{ steps.config.outputs.production_mid }}
+          DE_COUNT: ${{ steps.discover.outputs.count }}
+        run: |
+          {
+            echo ""
+            echo "## Overall Status"
+            echo ""
+            echo "✅ Deployment and Production verification completed successfully."
+            echo ""
+            echo "- LOB: \`$LOB\`"
+            echo "- POC production target BU MID: \`$PRODUCTION_MID\`"
+            echo "- Approved Data Extensions processed: \`$DE_COUNT\`"
+            echo "- Source of truth: \`main\`"
+            echo "- Data rows deployed: \`No\`"
+          } >> "$GITHUB_STEP_SUMMARY"
