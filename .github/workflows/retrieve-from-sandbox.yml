@@ -1,0 +1,262 @@
+name: Retrieve SFMC Assets from Sandbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      customer_key:
+        description: "SFMC Data Extension Customer Key"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sfmc-sandbox-retrieval
+  cancel-in-progress: false
+
+jobs:
+  retrieve-from-sandbox:
+    name: Retrieve Sandbox Assets
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sandbox branch
+        uses: actions/checkout@v4
+        with:
+          ref: sandbox
+
+      - name: Validate configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONFIG_FILE="config/lob-config.json"
+
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "::error::Configuration file not found: $CONFIG_FILE"
+            exit 1
+          fi
+
+          LOB="$(jq -r '.lineOfBusiness // empty' "$CONFIG_FILE")"
+          ASSET_ROOT="$(jq -r '.assetRoot // empty' "$CONFIG_FILE")"
+          SANDBOX_MID="$(jq -r '.environments.sandbox.businessUnitMid // empty' "$CONFIG_FILE")"
+          DE_ENABLED="$(jq -r '.assetTypes.dataExtensions.enabled // false' "$CONFIG_FILE")"
+          DE_DIRECTORY="$(jq -r '.assetTypes.dataExtensions.directory // empty' "$CONFIG_FILE")"
+
+          if [ -z "$LOB" ]; then
+            echo "::error::lineOfBusiness is missing in $CONFIG_FILE"
+            exit 1
+          fi
+
+          if [ -z "$ASSET_ROOT" ]; then
+            echo "::error::assetRoot is missing in $CONFIG_FILE"
+            exit 1
+          fi
+
+          if [ -z "$SANDBOX_MID" ]; then
+            echo "::error::Sandbox Business Unit MID is missing in $CONFIG_FILE"
+            exit 1
+          fi
+
+          if ! [[ "$SANDBOX_MID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Sandbox Business Unit MID must be numeric."
+            exit 1
+          fi
+
+          if [ "$DE_ENABLED" != "true" ]; then
+            echo "::error::Data Extension retrieval is disabled in $CONFIG_FILE"
+            exit 1
+          fi
+
+          if [ -z "$DE_DIRECTORY" ]; then
+            echo "::error::Data Extension directory is missing in $CONFIG_FILE"
+            exit 1
+          fi
+
+          echo "lob=$LOB" >> "$GITHUB_OUTPUT"
+          echo "asset_root=$ASSET_ROOT" >> "$GITHUB_OUTPUT"
+          echo "sandbox_mid=$SANDBOX_MID" >> "$GITHUB_OUTPUT"
+          echo "de_directory=$DE_DIRECTORY" >> "$GITHUB_OUTPUT"
+
+          echo "Configuration validation successful."
+          echo "LOB: $LOB"
+          echo "Sandbox MID: $SANDBOX_MID"
+
+      - name: Validate workflow input
+        id: input
+        shell: bash
+        env:
+          CUSTOMER_KEY: ${{ inputs.customer_key }}
+        run: |
+          set -euo pipefail
+
+          CUSTOMER_KEY="$(printf '%s' "$CUSTOMER_KEY" | xargs)"
+
+          if [ -z "$CUSTOMER_KEY" ]; then
+            echo "::error::Customer Key cannot be empty."
+            exit 1
+          fi
+
+          if [[ "$CUSTOMER_KEY" == *"/"* || "$CUSTOMER_KEY" == *"\\"* ]]; then
+            echo "::error::Customer Key cannot contain path separators."
+            exit 1
+          fi
+
+          if [[ "$CUSTOMER_KEY" == "." || "$CUSTOMER_KEY" == ".." ]]; then
+            echo "::error::Invalid Customer Key."
+            exit 1
+          fi
+
+          echo "customer_key=$CUSTOMER_KEY" >> "$GITHUB_OUTPUT"
+          echo "Customer Key input validated."
+
+      - name: Validate required GitHub secrets
+        shell: bash
+        env:
+          SFMC_CLIENT_ID: ${{ secrets.SFMC_CLIENT_ID }}
+          SFMC_CLIENT_SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+          SFMC_AUTH_BASE_URI: ${{ secrets.SFMC_AUTH_BASE_URI }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$SFMC_CLIENT_ID" ]; then
+            echo "::error::Repository secret SFMC_CLIENT_ID is missing."
+            exit 1
+          fi
+
+          if [ -z "$SFMC_CLIENT_SECRET" ]; then
+            echo "::error::Repository secret SFMC_CLIENT_SECRET is missing."
+            exit 1
+          fi
+
+          if [ -z "$SFMC_AUTH_BASE_URI" ]; then
+            echo "::error::Repository secret SFMC_AUTH_BASE_URI is missing."
+            exit 1
+          fi
+
+          case "$SFMC_AUTH_BASE_URI" in
+            https://*)
+              ;;
+            *)
+              echo "::error::SFMC_AUTH_BASE_URI must use HTTPS."
+              exit 1
+              ;;
+          esac
+
+          echo "Required GitHub secrets are configured."
+
+      - name: Authenticate to SFMC Sandbox
+        id: auth
+        shell: bash
+        env:
+          SFMC_CLIENT_ID: ${{ secrets.SFMC_CLIENT_ID }}
+          SFMC_CLIENT_SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+          SFMC_AUTH_BASE_URI: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
+        run: |
+          set -euo pipefail
+
+          AUTH_BASE_URI="${SFMC_AUTH_BASE_URI%/}"
+          TOKEN_ENDPOINT="${AUTH_BASE_URI}/v2/token"
+
+          REQUEST_BODY="$(
+            jq -n \
+              --arg client_id "$SFMC_CLIENT_ID" \
+              --arg client_secret "$SFMC_CLIENT_SECRET" \
+              --argjson account_id "$SANDBOX_MID" \
+              '{
+                grant_type: "client_credentials",
+                client_id: $client_id,
+                client_secret: $client_secret,
+                account_id: $account_id
+              }'
+          )"
+
+          HTTP_STATUS="$(
+            curl \
+              --silent \
+              --show-error \
+              --output token-response.json \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "Content-Type: application/json" \
+              --data "$REQUEST_BODY" \
+              "$TOKEN_ENDPOINT"
+          )"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            ERROR_MESSAGE="$(
+              jq -r '.message // .error_description // .error // "Unknown authentication error"' \
+              token-response.json 2>/dev/null || true
+            )"
+
+            echo "::error::SFMC authentication failed. HTTP status: $HTTP_STATUS"
+            echo "::error::SFMC response: $ERROR_MESSAGE"
+
+            rm -f token-response.json
+            exit 1
+          fi
+
+          ACCESS_TOKEN="$(jq -r '.access_token // empty' token-response.json)"
+          REST_INSTANCE_URL="$(jq -r '.rest_instance_url // empty' token-response.json)"
+          SOAP_INSTANCE_URL="$(jq -r '.soap_instance_url // empty' token-response.json)"
+          EXPIRES_IN="$(jq -r '.expires_in // empty' token-response.json)"
+
+          if [ -z "$ACCESS_TOKEN" ]; then
+            echo "::error::SFMC returned HTTP 200 but access_token is missing."
+            rm -f token-response.json
+            exit 1
+          fi
+
+          if [ -z "$REST_INSTANCE_URL" ]; then
+            echo "::error::SFMC returned HTTP 200 but rest_instance_url is missing."
+            rm -f token-response.json
+            exit 1
+          fi
+
+          if [ -z "$SOAP_INSTANCE_URL" ]; then
+            echo "::error::SFMC returned HTTP 200 but soap_instance_url is missing."
+            rm -f token-response.json
+            exit 1
+          fi
+
+          # Protect sensitive runtime values from GitHub log output.
+          echo "::add-mask::$ACCESS_TOKEN"
+          echo "::add-mask::$REST_INSTANCE_URL"
+          echo "::add-mask::$SOAP_INSTANCE_URL"
+
+          echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
+          echo "rest_instance_url=$REST_INSTANCE_URL" >> "$GITHUB_OUTPUT"
+          echo "soap_instance_url=$SOAP_INSTANCE_URL" >> "$GITHUB_OUTPUT"
+          echo "expires_in=$EXPIRES_IN" >> "$GITHUB_OUTPUT"
+
+          rm -f token-response.json
+
+          echo "SFMC Sandbox authentication successful."
+
+      - name: Authentication summary
+        if: success()
+        shell: bash
+        env:
+          LOB: ${{ steps.config.outputs.lob }}
+          SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
+          CUSTOMER_KEY: ${{ steps.input.outputs.customer_key }}
+          EXPIRES_IN: ${{ steps.auth.outputs.expires_in }}
+        run: |
+          {
+            echo "## SFMC Sandbox Authentication"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Environment | Sandbox |"
+            echo "| Line of Business | \`$LOB\` |"
+            echo "| Business Unit MID | \`$SANDBOX_MID\` |"
+            echo "| Asset Type | Data Extension |"
+            echo "| Requested Customer Key | \`$CUSTOMER_KEY\` |"
+            echo "| OAuth Authentication | SUCCESS |"
+            echo "| Token Lifetime Returned | \`${EXPIRES_IN:-Not returned}\` seconds |"
+            echo ""
+            echo "> No SFMC asset has been retrieved or modified in this step."
+          } >> "$GITHUB_STEP_SUMMARY"
