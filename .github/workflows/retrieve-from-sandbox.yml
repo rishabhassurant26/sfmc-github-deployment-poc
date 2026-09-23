@@ -1,6 +1,12 @@
 name: Retrieve SFMC Assets from Sandbox
 
 on:
+  push:
+    branches: [sandbox]
+    paths:
+      - "sfmc-assets/**"
+      - "config/lob-config.json"
+      - ".github/workflows/retrieve-from-sandbox.yml"
   workflow_dispatch:
     inputs:
       customer_key:
@@ -16,7 +22,92 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-sandbox-push:
+    name: Validate Sandbox Metadata on Push
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout pushed Sandbox commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate Sandbox configuration and all tracked DE definitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PYVALIDATE'
+          import json
+          import pathlib
+          import sys
+
+          def fail(message):
+              print(f"::error::{message}")
+              sys.exit(1)
+
+          try:
+              config = json.loads(pathlib.Path('config/lob-config.json').read_text())
+          except (OSError, ValueError) as exc:
+              fail(f'Cannot read valid configuration: {exc}')
+
+          def safe_part(value, label):
+              if not isinstance(value, str) or not value or value in ('.', '..') or '/' in value or chr(92) in value or '..' in value:
+                  fail(f'Invalid {label}: {value!r}')
+              return value
+
+          lob = safe_part(config.get('lineOfBusiness'), 'lineOfBusiness')
+          root = safe_part(config.get('assetRoot'), 'assetRoot')
+          de_cfg = config.get('assetTypes', {}).get('dataExtensions', {})
+          if de_cfg.get('enabled') is not True:
+              fail('Data Extension asset type is disabled')
+          directory = safe_part(de_cfg.get('directory'), 'dataExtensions.directory')
+          mid = config.get('environments', {}).get('sandbox', {}).get('businessUnitMid')
+          if not str(mid or '').isdigit():
+              fail('Sandbox MID missing or invalid')
+          base = pathlib.Path(root, lob, directory)
+          if not base.is_dir():
+              fail(f'Data Extension asset directory not found: {base}')
+
+          definitions = sorted(base.glob('*/definition.json'))
+          if not definitions:
+              fail(f'No approved Data Extension definitions found in {base}')
+
+          for path in definitions:
+              if path.is_symlink() or path.parent.is_symlink():
+                  fail(f'Symlink is not permitted: {path}')
+              try:
+                  asset = json.loads(path.read_text(encoding='utf-8'))
+              except (OSError, ValueError) as exc:
+                  fail(f'Invalid JSON {path}: {exc}')
+              if asset.get('assetType') != 'DataExtension':
+                  fail(f'Invalid assetType: {path}')
+              if not isinstance(asset.get('customerKey'), str) or asset['customerKey'] != path.parent.name:
+                  fail(f'CustomerKey does not match asset directory: {path}')
+              if not isinstance(asset.get('name'), str) or not asset['name'].strip():
+                  fail(f'Data Extension name missing: {path}')
+              fields = asset.get('fields')
+              if not isinstance(fields, list) or not fields:
+                  fail(f'Fields must be a nonempty array: {path}')
+              seen = set()
+              for field in fields:
+                  if not isinstance(field, dict) or not isinstance(field.get('name'), str) or not field['name'].strip():
+                      fail(f'Field name missing: {path}')
+                  if field['name'].lower() in seen:
+                      fail(f'Duplicate field name {field["name"]}: {path}')
+                  seen.add(field['name'].lower())
+                  if not isinstance(field.get('fieldType'), str) or not field['fieldType']:
+                      fail(f'FieldType missing for {field["name"]}: {path}')
+                  for flag in ('isPrimaryKey', 'isRequired'):
+                      if not isinstance(field.get(flag), bool):
+                          fail(f'{flag} must be boolean for {field["name"]}: {path}')
+              print(f'PASS {asset["customerKey"]} ({len(fields)} fields)')
+          print(f'Validated {len(definitions)} Sandbox DE definition(s).')
+          PYVALIDATE
+
   retrieve-from-sandbox:
+    if: github.event_name == 'workflow_dispatch' 
     name: Retrieve Sandbox Asset
     runs-on: ubuntu-latest
 
