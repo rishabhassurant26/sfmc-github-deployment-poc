@@ -752,26 +752,32 @@ jobs:
 
               root = soap_call("Create", body)
 
-              status = text_of(root, "OverallStatus") or ""
-              if status not in ("OK", "Has Error"):
-                  raise RuntimeError(
-                      f"{desired['customerKey']}: unexpected Create status: {status}"
+              status = text_of(root, "OverallStatus") or "UNKNOWN"
+              results = [
+                  node for node in root.iter()
+                  if node.tag.split("}")[-1] == "Results"
+              ]
+              details = []
+              for result in results:
+                  result_status = text_of(result, "StatusCode") or "UNKNOWN"
+                  result_message = text_of(result, "StatusMessage") or ""
+                  error_code = text_of(result, "ErrorCode") or ""
+                  details.append(
+                      f"StatusCode={result_status}; "
+                      f"ErrorCode={error_code}; "
+                      f"StatusMessage={result_message}"
                   )
 
-              errors = []
-              for result in root.iter():
-                  if result.tag.split("}")[-1] != "Results":
-                      continue
-                  result_status = text_of(result, "StatusCode")
-                  if result_status and result_status != "OK":
-                      errors.append(
-                          text_of(result, "StatusMessage") or result_status
-                      )
-
-              if errors:
+              if (
+                  status != "OK"
+                  or len(results) != 1
+                  or (results and (text_of(results[0], "StatusCode") or "") != "OK")
+              ):
                   raise RuntimeError(
-                      f"{desired['customerKey']}: Create failed: "
-                      + " | ".join(errors)
+                      f"{desired['customerKey']}: Salesforce CREATE failed. "
+                      f"OverallStatus={status}; "
+                      f"ResultCount={len(results)}; "
+                      + " | ".join(details)
                   )
 
           def update_de(desired, actual_de, actual_fields):
