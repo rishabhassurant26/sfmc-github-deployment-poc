@@ -887,64 +887,94 @@ jobs:
                       + " | ".join(details)
                   )
 
+          def require_update_ok(root, customer_key, operation):
+              overall = text_of(root, "OverallStatus") or "MISSING"
+              results = [n for n in root.iter() if n.tag.split("}")[-1] == "Results"]
+              messages = []
+              for result in results:
+                  messages.append(
+                      f"StatusCode={text_of(result, 'StatusCode') or 'MISSING'}; "
+                      f"ErrorCode={text_of(result, 'ErrorCode') or 'N/A'}; "
+                      f"StatusMessage={text_of(result, 'StatusMessage') or 'N/A'}"
+                  )
+              if overall != "OK" or len(results) != 1 or (text_of(results[0], "StatusCode") or "") != "OK":
+                  raise RuntimeError(
+                      f"{customer_key}: {operation} rejected: OverallStatus={overall}; "
+                      f"ResultCount={len(results)}; " + " | ".join(messages)
+                  )
+
           def update_de(desired, actual_de, actual_fields):
-              actual_by_name = {
-                  field["name"]: field
-                  for field in actual_fields
-              }
+              actual_by_name = {f["name"]: f for f in actual_fields}
+              missing = [f for f in desired["fields"] if f["name"] not in actual_by_name]
 
-              fields_xml = []
+              # Salesforce's Add Column operation: UPDATE the parent DataExtension
+              # with ONLY the new Field, not a standalone DataExtensionField CREATE.
+              # Keep payload minimal; Ordinal is system-controlled on existing DEs.
+              for field in missing:
+                  live = retrieve_fields(desired["customerKey"])
+                  if field["name"] in {f["name"] for f in live}:
+                      continue
+                  parts = [f"<Name>{esc(field['name'])}</Name>",
+                           f"<FieldType>{esc(field['fieldType'])}</FieldType>"]
+                  if field.get("maxLength") is not None:
+                      parts.append(f"<MaxLength>{int(field['maxLength'])}</MaxLength>")
+                  parts.append(f"<IsRequired>{bool_text(field.get('isRequired', False))}</IsRequired>")
+                  if field.get("defaultValue") is not None:
+                      parts.append(f"<DefaultValue>{esc(field['defaultValue'])}</DefaultValue>")
+                  if field.get("precision") is not None:
+                      parts.append(f"<Precision>{int(field['precision'])}</Precision>")
+                  if field.get("scale") is not None:
+                      parts.append(f"<Scale>{int(field['scale'])}</Scale>")
+                  body = f"""
+          <UpdateRequest xmlns="{API_NS}">
+            <Options />
+            <Objects xsi:type="DataExtension">
+              <CustomerKey>{esc(desired['customerKey'])}</CustomerKey>
+              <Fields><Field>{''.join(parts)}</Field></Fields>
+            </Objects>
+          </UpdateRequest>
+          """
+                  require_update_ok(soap_call("Update", body), desired["customerKey"],
+                                    f"add field {field['name']}")
+                  confirmed = retrieve_fields(desired["customerKey"])
+                  if field["name"] not in {f["name"] for f in confirmed}:
+                      raise RuntimeError(f"{desired['customerKey']}: API accepted add field {field['name']} "
+                                         "but subsequent retrieve did not find it")
+                  print(f"Confirmed new Production field: {field['name']}")
 
-              for desired_field in desired["fields"]:
-                  existing = actual_by_name.get(desired_field["name"])
-
-                  if existing:
-                      merged = dict(desired_field)
-                      merged["objectId"] = existing["objectId"]
-                      fields_xml.append(
-                          field_xml(merged, include_object_id=True)
-                      )
-                  else:
-                      fields_xml.append(field_xml(desired_field))
-
+              # Re-read after additions; skip any unnecessary UPDATE of existing
+              # fields, avoiding needless writes to a Production DE.
+              current_de = retrieve_de(desired["customerKey"])
+              current_fields = retrieve_fields(desired["customerKey"])
+              if normalized_actual(current_de, current_fields) == desired:
+                  return
+              current_by_name = {f["name"]: f for f in current_fields}
+              # Preserve the proven existing-field update behavior for metadata
+              # changes, with IDs; never attempt to re-add already-present fields.
+              field_children = []
+              for field in desired["fields"]:
+                  merged = dict(field)
+                  merged["objectId"] = current_by_name[field["name"]]["objectId"]
+                  child = field_xml(merged, include_object_id=True)
+                  child = child.replace("<Fields>", "<Field>", 1).replace("</Fields>", "</Field>", 1)
+                  field_children.append(child)
+              fields_xml = "<Fields>" + "".join(field_children) + "</Fields>"
               body = f"""
           <UpdateRequest xmlns="{API_NS}">
             <Options />
             <Objects xsi:type="DataExtension">
-              <ObjectID>{esc(actual_de['objectId'])}</ObjectID>
+              <ObjectID>{esc(current_de['objectId'])}</ObjectID>
               <CustomerKey>{esc(desired['customerKey'])}</CustomerKey>
               <Name>{esc(desired['name'])}</Name>
               <Description>{esc(desired['description'])}</Description>
               <IsSendable>{bool_text(desired['isSendable'])}</IsSendable>
               <IsTestable>{bool_text(desired['isTestable'])}</IsTestable>
-              {''.join(fields_xml)}
+              {fields_xml}
             </Objects>
           </UpdateRequest>
           """
-
-              root = soap_call("Update", body)
-
-              status = text_of(root, "OverallStatus") or ""
-              if status not in ("OK", "Has Error"):
-                  raise RuntimeError(
-                      f"{desired['customerKey']}: unexpected Update status: {status}"
-                  )
-
-              errors = []
-              for result in root.iter():
-                  if result.tag.split("}")[-1] != "Results":
-                      continue
-                  result_status = text_of(result, "StatusCode")
-                  if result_status and result_status != "OK":
-                      errors.append(
-                          text_of(result, "StatusMessage") or result_status
-                      )
-
-              if errors:
-                  raise RuntimeError(
-                      f"{desired['customerKey']}: Update failed: "
-                      + " | ".join(errors)
-                  )
+              require_update_ok(soap_call("Update", body), desired["customerKey"],
+                                "update existing metadata")
 
           results = []
           failed = False
@@ -1008,8 +1038,9 @@ jobs:
 
                   if verified != desired:
                       raise RuntimeError(
-                          "Post-deployment Production definition does not "
-                          "match GitHub main."
+                          "Post-deployment Production definition differs from GitHub main. "
+                          + "Expected=" + json.dumps(desired, sort_keys=True)
+                          + "; Actual=" + json.dumps(verified, sort_keys=True)
                       )
 
                   verification = "PASS"
