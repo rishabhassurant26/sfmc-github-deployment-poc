@@ -2,7 +2,7 @@
   "assetType": "DataExtension",
   "name": "GITHUB_JOURNEY_ENTRY_DE",
   "customerKey": "GITHUB_JOURNEY_ENTRY_DE",
-  "description": "Journey Entry DE created from GitHub schema",
+  "description": "Journey Entry DE created from GitHub schemaTEST",
   "isSendable": false,
   "isTestable": false,
   "fields": [
