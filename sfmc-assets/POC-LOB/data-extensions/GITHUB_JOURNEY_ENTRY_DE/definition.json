@@ -20,7 +20,7 @@
     {
       "name": "FirstName",
       "fieldType": "Text",
-      "maxLength": 20,
+      "maxLength": 50,
       "isPrimaryKey": false,
       "isRequired": false,
       "defaultValue": null,
