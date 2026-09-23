@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0",
+  "lineOfBusiness": "POC-LOB",
+  "assetRoot": "sfmc-assets",
+  "environments": {
+    "sandbox": {
+      "businessUnitMid": "524002130"
+    },
+    "production": {
+      "businessUnitMid": "10913480"
+    }
+  },
+  "assetTypes": {
+    "dataExtensions": {
+      "enabled": true,
+      "directory": "data-extensions"
+    },
+    "contentBuilder": {
+      "enabled": false,
+      "directory": "content-builder"
+    },
+    "automations": {
+      "enabled": false,
+      "directory": "automations"
+    }
+  }
+}
