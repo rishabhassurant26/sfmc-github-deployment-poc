@@ -35,10 +35,10 @@ jobs:
 
           CONFIG_FILE="config/lob-config.json"
 
-          if [ ! -f "$CONFIG_FILE" ]; then
+          [ -f "$CONFIG_FILE" ] || {
             echo "::error::Configuration file not found: $CONFIG_FILE"
             exit 1
-          fi
+          }
 
           LOB="$(jq -r '.lineOfBusiness // empty' "$CONFIG_FILE")"
           ASSET_ROOT="$(jq -r '.assetRoot // empty' "$CONFIG_FILE")"
@@ -46,39 +46,39 @@ jobs:
           DE_ENABLED="$(jq -r '.assetTypes.dataExtensions.enabled // false' "$CONFIG_FILE")"
           DE_DIRECTORY="$(jq -r '.assetTypes.dataExtensions.directory // empty' "$CONFIG_FILE")"
 
-          if [ -z "$LOB" ]; then
+          [ -n "$LOB" ] || {
             echo "::error::lineOfBusiness is missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$ASSET_ROOT" ]; then
+          [ -n "$ASSET_ROOT" ] || {
             echo "::error::assetRoot is missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$SANDBOX_MID" ]; then
+          [ -n "$SANDBOX_MID" ] || {
             echo "::error::Sandbox Business Unit MID is missing."
             exit 1
-          fi
+          }
 
-          if ! [[ "$SANDBOX_MID" =~ ^[0-9]+$ ]]; then
+          [[ "$SANDBOX_MID" =~ ^[0-9]+$ ]] || {
             echo "::error::Sandbox Business Unit MID must be numeric."
             exit 1
-          fi
+          }
 
-          if [ "$DE_ENABLED" != "true" ]; then
+          [ "$DE_ENABLED" = "true" ] || {
             echo "::error::Data Extension retrieval is disabled."
             exit 1
-          fi
+          }
 
-          if [ -z "$DE_DIRECTORY" ]; then
+          [ -n "$DE_DIRECTORY" ] || {
             echo "::error::Data Extension directory is missing."
             exit 1
-          fi
+          }
 
           for VALUE in "$LOB" "$ASSET_ROOT" "$DE_DIRECTORY"; do
             if [[ "$VALUE" == /* || "$VALUE" == *".."* || "$VALUE" == *"\\"* ]]; then
-              echo "::error::Unsafe path value detected in configuration: $VALUE"
+              echo "::error::Unsafe repository path value: $VALUE"
               exit 1
             fi
           done
@@ -100,10 +100,10 @@ jobs:
 
           CUSTOMER_KEY="$(printf '%s' "$RAW_CUSTOMER_KEY" | xargs)"
 
-          if [ -z "$CUSTOMER_KEY" ]; then
+          [ -n "$CUSTOMER_KEY" ] || {
             echo "::error::Customer Key cannot be empty."
             exit 1
-          fi
+          }
 
           if [[ "$CUSTOMER_KEY" == *"/"* || "$CUSTOMER_KEY" == *"\\"* ]]; then
             echo "::error::Customer Key cannot contain path separators."
@@ -116,7 +116,7 @@ jobs:
           fi
 
           if [[ "$CUSTOMER_KEY" =~ [[:cntrl:]] ]]; then
-            echo "::error::Customer Key contains invalid control characters."
+            echo "::error::Customer Key contains control characters."
             exit 1
           fi
 
@@ -149,8 +149,7 @@ jobs:
           }
 
           case "$SFMC_AUTH_BASE_URI" in
-            https://*)
-              ;;
+            https://*) ;;
             *)
               echo "::error::SFMC_AUTH_BASE_URI must use HTTPS."
               exit 1
@@ -217,17 +216,17 @@ jobs:
           SOAP_INSTANCE_URL="$(jq -r '.soap_instance_url // empty' token-response.json)"
           EXPIRES_IN="$(jq -r '.expires_in // empty' token-response.json)"
 
-          if [ -z "$ACCESS_TOKEN" ]; then
+          [ -n "$ACCESS_TOKEN" ] || {
             echo "::error::access_token missing from SFMC response."
             rm -f token-response.json
             exit 1
-          fi
+          }
 
-          if [ -z "$SOAP_INSTANCE_URL" ]; then
+          [ -n "$SOAP_INSTANCE_URL" ] || {
             echo "::error::soap_instance_url missing from SFMC response."
             rm -f token-response.json
             exit 1
-          fi
+          }
 
           echo "::add-mask::$ACCESS_TOKEN"
           echo "::add-mask::$REST_INSTANCE_URL"
@@ -256,25 +255,20 @@ jobs:
           import html
           import os
 
-          customer_key = os.environ["CUSTOMER_KEY"]
-          access_token = os.environ["ACCESS_TOKEN"]
+          token = html.escape(os.environ["ACCESS_TOKEN"])
+          key = html.escape(os.environ["CUSTOMER_KEY"])
 
           envelope = f"""<?xml version="1.0" encoding="UTF-8"?>
           <soapenv:Envelope
-              xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-              xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
             <soapenv:Header>
-              <fueloauth xmlns="http://exacttarget.com">{html.escape(access_token)}</fueloauth>
+              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
             </soapenv:Header>
-
             <soapenv:Body>
               <RetrieveRequestMsg xmlns="http://exacttarget.com/wsdl/partnerAPI">
                 <RetrieveRequest>
-
                   <ObjectType>DataExtension</ObjectType>
-
                   <Properties>ObjectID</Properties>
                   <Properties>CustomerKey</Properties>
                   <Properties>Name</Properties>
@@ -282,26 +276,19 @@ jobs:
                   <Properties>IsSendable</Properties>
                   <Properties>IsTestable</Properties>
                   <Properties>CategoryID</Properties>
-
                   <Filter xsi:type="SimpleFilterPart">
                     <Property>CustomerKey</Property>
                     <SimpleOperator>equals</SimpleOperator>
-                    <Value>{html.escape(customer_key)}</Value>
+                    <Value>{key}</Value>
                   </Filter>
-
                 </RetrieveRequest>
               </RetrieveRequestMsg>
             </soapenv:Body>
-
           </soapenv:Envelope>
           """
 
-          with open(
-              "de-metadata-request.xml",
-              "w",
-              encoding="utf-8",
-          ) as file:
-              file.write(envelope)
+          with open("de-metadata-request.xml", "w", encoding="utf-8") as f:
+              f.write(envelope)
           PY
 
           SOAP_ENDPOINT="${SOAP_INSTANCE_URL%/}/Service.asmx"
@@ -323,37 +310,6 @@ jobs:
 
           if [ "$HTTP_STATUS" != "200" ]; then
             echo "::error::Data Extension metadata retrieval failed. HTTP $HTTP_STATUS"
-
-            python3 <<'PY'
-          import xml.etree.ElementTree as ET
-
-          try:
-              root = ET.parse("de-metadata-response.xml").getroot()
-
-              namespaces = {
-                  "soap11": "http://schemas.xmlsoap.org/soap/envelope/",
-                  "soap12": "http://www.w3.org/2003/05/soap-envelope",
-              }
-
-              fault = (
-                  root.find(".//soap11:Fault", namespaces)
-                  or root.find(".//soap12:Fault", namespaces)
-              )
-
-              if fault is not None:
-                  fault_string = fault.find("faultstring")
-
-                  if fault_string is not None and fault_string.text:
-                      print(f"::error::SFMC SOAP fault: {fault_string.text}")
-                  else:
-                      reason = fault.find(".//soap12:Text", namespaces)
-
-                      if reason is not None and reason.text:
-                          print(f"::error::SFMC SOAP fault: {reason.text}")
-          except Exception:
-              pass
-          PY
-
             rm -f de-metadata-response.xml
             exit 1
           fi
@@ -364,152 +320,276 @@ jobs:
           import sys
           import xml.etree.ElementTree as ET
 
-          response_file = "de-metadata-response.xml"
-          requested_key = os.environ["CUSTOMER_KEY"]
-
           ns = {
-              "soap11": "http://schemas.xmlsoap.org/soap/envelope/",
-              "soap12": "http://www.w3.org/2003/05/soap-envelope",
+              "soap": "http://schemas.xmlsoap.org/soap/envelope/",
               "et": "http://exacttarget.com/wsdl/partnerAPI",
           }
 
           try:
-              root = ET.parse(response_file).getroot()
+              root = ET.parse("de-metadata-response.xml").getroot()
           except ET.ParseError as exc:
-              print(
-                  f"::error::Invalid SOAP XML returned by SFMC: {exc}"
-              )
+              print(f"::error::Invalid metadata SOAP response: {exc}")
               sys.exit(1)
 
-          fault = root.find(".//soap11:Fault", ns)
-
-          if fault is None:
-              fault = root.find(".//soap12:Fault", ns)
-
+          fault = root.find(".//soap:Fault", ns)
           if fault is not None:
               fault_string = fault.find("faultstring")
-
-              if fault_string is not None and fault_string.text:
-                  message = fault_string.text
-              else:
-                  reason = fault.find(".//soap12:Text", ns)
-                  message = (
-                      reason.text
-                      if reason is not None and reason.text
-                      else "Unknown SOAP fault"
-                  )
-
+              message = (
+                  fault_string.text
+                  if fault_string is not None and fault_string.text
+                  else "Unknown SOAP fault"
+              )
               print(f"::error::SFMC SOAP fault: {message}")
               sys.exit(1)
 
           status = root.find(".//et:OverallStatus", ns)
-
-          if status is not None:
-              valid_statuses = {
-                  "OK",
-                  "MoreDataAvailable",
-                  "Has More Rows",
-              }
-
-              if status.text not in valid_statuses:
-                  print(
-                      f"::error::SFMC retrieve status: {status.text}"
-                  )
-                  sys.exit(1)
+          if status is not None and status.text not in (
+              "OK",
+              "MoreDataAvailable",
+              "Has More Rows",
+          ):
+              print(f"::error::SFMC retrieve status: {status.text}")
+              sys.exit(1)
 
           results = root.findall(".//et:Results", ns)
+          requested_key = os.environ["CUSTOMER_KEY"]
 
           if len(results) == 0:
               print(
-                  "::error::No Data Extension found in the "
-                  "configured Sandbox BU with Customer Key "
-                  f"'{requested_key}'."
+                  "::error::No Data Extension found in Sandbox "
+                  f"with Customer Key '{requested_key}'."
               )
               sys.exit(1)
 
           if len(results) > 1:
               print(
-                  "::error::More than one Data Extension was "
-                  f"returned for Customer Key '{requested_key}'."
+                  "::error::Multiple Data Extensions returned for "
+                  f"Customer Key '{requested_key}'."
               )
               sys.exit(1)
 
           result = results[0]
 
-          def text(name):
+          def value(name):
               node = result.find(f"et:{name}", ns)
+              return node.text if node is not None and node.text is not None else None
 
-              if node is None or node.text is None:
-                  return None
-
-              return node.text
-
-          returned_key = text("CustomerKey")
+          returned_key = value("CustomerKey")
 
           if returned_key != requested_key:
               print(
-                  "::error::Returned CustomerKey "
-                  f"'{returned_key}' does not match requested "
-                  f"CustomerKey '{requested_key}'."
+                  "::error::Returned CustomerKey doesn't match "
+                  "requested CustomerKey."
               )
               sys.exit(1)
-
-          category_id = text("CategoryID")
 
           metadata = {
-              "objectId": text("ObjectID"),
+              "objectId": value("ObjectID"),
               "customerKey": returned_key,
-              "name": text("Name"),
-              "description": text("Description") or "",
-              "isSendable": (
-                  (text("IsSendable") or "").lower() == "true"
-              ),
-              "isTestable": (
-                  (text("IsTestable") or "").lower() == "true"
-              ),
-              "categoryId": (
-                  int(category_id)
-                  if category_id
-                  else None
-              ),
+              "name": value("Name"),
+              "description": value("Description") or "",
+              "isSendable": (value("IsSendable") or "").lower() == "true",
+              "isTestable": (value("IsTestable") or "").lower() == "true",
           }
 
-          if not metadata["objectId"]:
-              print(
-                  "::error::SFMC returned the Data Extension "
-                  "without ObjectID."
-              )
+          if not metadata["objectId"] or not metadata["name"]:
+              print("::error::Incomplete Data Extension metadata returned.")
               sys.exit(1)
 
-          if not metadata["name"]:
-              print(
-                  "::error::SFMC returned the Data Extension "
-                  "without Name."
-              )
-              sys.exit(1)
-
-          with open(
-              "de-metadata.json",
-              "w",
-              encoding="utf-8",
-          ) as file:
-              json.dump(
-                  metadata,
-                  file,
-                  indent=2,
-                  ensure_ascii=False,
-              )
+          with open("de-metadata.json", "w", encoding="utf-8") as f:
+              json.dump(metadata, f, indent=2, ensure_ascii=False)
 
           print(
-              "Found Data Extension: "
-              f"{metadata['name']} "
+              f"Found Data Extension: {metadata['name']} "
               f"({metadata['customerKey']})"
           )
           PY
 
           rm -f de-metadata-response.xml
 
-          echo "found=true" >> "$GITHUB_OUTPUT"
+      - name: Describe DataExtensionField
+        id: describe_fields
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_INSTANCE_URL: ${{ steps.auth.outputs.soap_instance_url }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import html
+          import os
+
+          token = html.escape(os.environ["ACCESS_TOKEN"])
+
+          envelope = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+            <soapenv:Header>
+              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
+            </soapenv:Header>
+            <soapenv:Body>
+              <DefinitionRequestMsg xmlns="http://exacttarget.com/wsdl/partnerAPI">
+                <DescribeRequests>
+                  <ObjectDefinitionRequest>
+                    <ObjectType>DataExtensionField</ObjectType>
+                  </ObjectDefinitionRequest>
+                </DescribeRequests>
+              </DefinitionRequestMsg>
+            </soapenv:Body>
+          </soapenv:Envelope>
+          """
+
+          with open("describe-fields-request.xml", "w", encoding="utf-8") as f:
+              f.write(envelope)
+          PY
+
+          SOAP_ENDPOINT="${SOAP_INSTANCE_URL%/}/Service.asmx"
+
+          HTTP_STATUS="$(
+            curl \
+              --silent \
+              --show-error \
+              --output describe-fields-response.xml \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "Content-Type: text/xml; charset=UTF-8" \
+              --header 'SOAPAction: "Describe"' \
+              --data-binary @describe-fields-request.xml \
+              "$SOAP_ENDPOINT"
+          )"
+
+          rm -f describe-fields-request.xml
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::DataExtensionField Describe failed. HTTP $HTTP_STATUS"
+            rm -f describe-fields-response.xml
+            exit 1
+          fi
+
+          python3 <<'PY'
+          import json
+          import sys
+          import xml.etree.ElementTree as ET
+
+          ns = {
+              "soap": "http://schemas.xmlsoap.org/soap/envelope/",
+              "et": "http://exacttarget.com/wsdl/partnerAPI",
+          }
+
+          try:
+              root = ET.parse("describe-fields-response.xml").getroot()
+          except ET.ParseError as exc:
+              print(f"::error::Invalid Describe SOAP response: {exc}")
+              sys.exit(1)
+
+          fault = root.find(".//soap:Fault", ns)
+
+          if fault is not None:
+              fault_string = fault.find("faultstring")
+              message = (
+                  fault_string.text
+                  if fault_string is not None and fault_string.text
+                  else "Unknown SOAP fault"
+              )
+              print(f"::error::SFMC Describe SOAP fault: {message}")
+              sys.exit(1)
+
+          property_nodes = root.findall(".//et:Properties", ns)
+
+          if not property_nodes:
+              print(
+                  "::error::Describe returned no property definitions "
+                  "for DataExtensionField."
+              )
+              sys.exit(1)
+
+          retrievable = set()
+
+          for prop in property_nodes:
+              name_node = prop.find("et:Name", ns)
+              retrievable_node = prop.find("et:IsRetrievable", ns)
+
+              name = (
+                  name_node.text
+                  if name_node is not None and name_node.text
+                  else None
+              )
+
+              is_retrievable = (
+                  retrievable_node is not None
+                  and (retrievable_node.text or "").lower() == "true"
+              )
+
+              if name and is_retrievable:
+                  retrievable.add(name)
+
+          if not retrievable:
+              print(
+                  "::error::Describe did not return any "
+                  "IsRetrievable=true properties."
+              )
+              sys.exit(1)
+
+          # These are the schema properties useful for the DE definition.
+          # Only properties confirmed by Describe are used.
+          candidates = [
+              "ObjectID",
+              "CustomerKey",
+              "Name",
+              "FieldType",
+              "MaxLength",
+              "IsPrimaryKey",
+              "IsRequired",
+              "DefaultValue",
+              "Ordinal",
+              "Precision",
+              "Scale",
+          ]
+
+          selected = [
+              property_name
+              for property_name in candidates
+              if property_name in retrievable
+          ]
+
+          # These are required for a deployable, ordered schema definition.
+          required = [
+              "Name",
+              "FieldType",
+              "IsPrimaryKey",
+              "IsRequired",
+              "Ordinal",
+          ]
+
+          missing_required = [
+              property_name
+              for property_name in required
+              if property_name not in selected
+          ]
+
+          if missing_required:
+              print(
+                  "::error::Tenant Describe response does not mark "
+                  "required DataExtensionField properties as retrievable: "
+                  + ", ".join(missing_required)
+              )
+              sys.exit(1)
+
+          with open(
+              "retrievable-field-properties.json",
+              "w",
+              encoding="utf-8",
+          ) as f:
+              json.dump(selected, f, indent=2)
+
+          print(
+              "Tenant-supported DataExtensionField properties: "
+              + ", ".join(selected)
+          )
+          PY
+
+          rm -f describe-fields-response.xml
 
       - name: Retrieve Data Extension fields
         id: fields
@@ -523,58 +603,48 @@ jobs:
 
           python3 <<'PY'
           import html
+          import json
           import os
 
-          customer_key = os.environ["CUSTOMER_KEY"]
-          access_token = os.environ["ACCESS_TOKEN"]
+          with open(
+              "retrievable-field-properties.json",
+              encoding="utf-8",
+          ) as f:
+              properties = json.load(f)
+
+          property_xml = "\n".join(
+              f"<Properties>{html.escape(prop)}</Properties>"
+              for prop in properties
+          )
+
+          token = html.escape(os.environ["ACCESS_TOKEN"])
+          key = html.escape(os.environ["CUSTOMER_KEY"])
 
           envelope = f"""<?xml version="1.0" encoding="UTF-8"?>
           <soapenv:Envelope
-              xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-              xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
             <soapenv:Header>
-              <fueloauth xmlns="http://exacttarget.com">{html.escape(access_token)}</fueloauth>
+              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
             </soapenv:Header>
-
             <soapenv:Body>
               <RetrieveRequestMsg xmlns="http://exacttarget.com/wsdl/partnerAPI">
                 <RetrieveRequest>
-
                   <ObjectType>DataExtensionField</ObjectType>
-
-                  <Properties>ObjectID</Properties>
-                  <Properties>CustomerKey</Properties>
-                  <Properties>Name</Properties>
-                  <Properties>FieldType</Properties>
-                  <Properties>MaxLength</Properties>
-                  <Properties>IsPrimaryKey</Properties>
-                  <Properties>IsRequired</Properties>
-                  <Properties>DefaultValue</Properties>
-                  <Properties>Ordinal</Properties>
-                  <Properties>Precision</Properties>
-                  <Properties>Scale</Properties>
-
+                  {property_xml}
                   <Filter xsi:type="SimpleFilterPart">
                     <Property>DataExtension.CustomerKey</Property>
                     <SimpleOperator>equals</SimpleOperator>
-                    <Value>{html.escape(customer_key)}</Value>
+                    <Value>{key}</Value>
                   </Filter>
-
                 </RetrieveRequest>
               </RetrieveRequestMsg>
             </soapenv:Body>
-
           </soapenv:Envelope>
           """
 
-          with open(
-              "de-fields-request.xml",
-              "w",
-              encoding="utf-8",
-          ) as file:
-              file.write(envelope)
+          with open("de-fields-request.xml", "w", encoding="utf-8") as f:
+              f.write(envelope)
           PY
 
           SOAP_ENDPOINT="${SOAP_INSTANCE_URL%/}/Service.asmx"
@@ -596,37 +666,6 @@ jobs:
 
           if [ "$HTTP_STATUS" != "200" ]; then
             echo "::error::Data Extension field retrieval failed. HTTP $HTTP_STATUS"
-
-            python3 <<'PY'
-          import xml.etree.ElementTree as ET
-
-          try:
-              root = ET.parse("de-fields-response.xml").getroot()
-
-              namespaces = {
-                  "soap11": "http://schemas.xmlsoap.org/soap/envelope/",
-                  "soap12": "http://www.w3.org/2003/05/soap-envelope",
-              }
-
-              fault = (
-                  root.find(".//soap11:Fault", namespaces)
-                  or root.find(".//soap12:Fault", namespaces)
-              )
-
-              if fault is not None:
-                  fault_string = fault.find("faultstring")
-
-                  if fault_string is not None and fault_string.text:
-                      print(f"::error::SFMC SOAP fault: {fault_string.text}")
-                  else:
-                      reason = fault.find(".//soap12:Text", namespaces)
-
-                      if reason is not None and reason.text:
-                          print(f"::error::SFMC SOAP fault: {reason.text}")
-          except Exception:
-              pass
-          PY
-
             rm -f de-fields-response.xml
             exit 1
           fi
@@ -637,73 +676,47 @@ jobs:
           import xml.etree.ElementTree as ET
 
           ns = {
-              "soap11": "http://schemas.xmlsoap.org/soap/envelope/",
-              "soap12": "http://www.w3.org/2003/05/soap-envelope",
+              "soap": "http://schemas.xmlsoap.org/soap/envelope/",
               "et": "http://exacttarget.com/wsdl/partnerAPI",
           }
 
           try:
-              root = ET.parse(
-                  "de-fields-response.xml"
-              ).getroot()
+              root = ET.parse("de-fields-response.xml").getroot()
           except ET.ParseError as exc:
-              print(
-                  f"::error::Invalid SOAP XML returned by SFMC: {exc}"
-              )
+              print(f"::error::Invalid fields SOAP response: {exc}")
               sys.exit(1)
 
-          fault = root.find(".//soap11:Fault", ns)
-
-          if fault is None:
-              fault = root.find(".//soap12:Fault", ns)
+          fault = root.find(".//soap:Fault", ns)
 
           if fault is not None:
               fault_string = fault.find("faultstring")
-
-              if fault_string is not None and fault_string.text:
-                  message = fault_string.text
-              else:
-                  reason = fault.find(".//soap12:Text", ns)
-                  message = (
-                      reason.text
-                      if reason is not None and reason.text
-                      else "Unknown SOAP fault"
-                  )
-
+              message = (
+                  fault_string.text
+                  if fault_string is not None and fault_string.text
+                  else "Unknown SOAP fault"
+              )
               print(f"::error::SFMC SOAP fault: {message}")
               sys.exit(1)
 
           status = root.find(".//et:OverallStatus", ns)
 
-          if status is not None:
-              valid_statuses = {
-                  "OK",
-                  "MoreDataAvailable",
-                  "Has More Rows",
-              }
-
-              if status.text not in valid_statuses:
-                  print(
-                      f"::error::SFMC retrieve status: {status.text}"
-                  )
-                  sys.exit(1)
+          if status is not None and status.text not in (
+              "OK",
+              "MoreDataAvailable",
+              "Has More Rows",
+          ):
+              print(f"::error::SFMC field retrieve status: {status.text}")
+              sys.exit(1)
 
           results = root.findall(".//et:Results", ns)
 
           if not results:
-              print(
-                  "::error::No fields were returned for "
-                  "the Data Extension."
-              )
+              print("::error::No fields returned for the Data Extension.")
               sys.exit(1)
 
-          def node_text(result, name):
+          def text(result, name):
               node = result.find(f"et:{name}", ns)
-
-              if node is None or node.text is None:
-                  return None
-
-              return node.text
+              return node.text if node is not None and node.text is not None else None
 
           def boolean(value):
               return (value or "").lower() == "true"
@@ -711,7 +724,6 @@ jobs:
           def integer(value):
               if value is None or value == "":
                   return None
-
               try:
                   return int(value)
               except ValueError:
@@ -721,46 +733,25 @@ jobs:
 
           for result in results:
               field = {
-                  "name": node_text(result, "Name"),
-                  "fieldType": node_text(
-                      result,
-                      "FieldType",
-                  ),
-                  "maxLength": integer(
-                      node_text(result, "MaxLength")
-                  ),
-                  "isPrimaryKey": boolean(
-                      node_text(result, "IsPrimaryKey")
-                  ),
-                  "isRequired": boolean(
-                      node_text(result, "IsRequired")
-                  ),
-                  "defaultValue": node_text(
-                      result,
-                      "DefaultValue",
-                  ),
-                  "ordinal": integer(
-                      node_text(result, "Ordinal")
-                  ),
-                  "precision": integer(
-                      node_text(result, "Precision")
-                  ),
-                  "scale": integer(
-                      node_text(result, "Scale")
-                  ),
+                  "name": text(result, "Name"),
+                  "fieldType": text(result, "FieldType"),
+                  "maxLength": integer(text(result, "MaxLength")),
+                  "isPrimaryKey": boolean(text(result, "IsPrimaryKey")),
+                  "isRequired": boolean(text(result, "IsRequired")),
+                  "defaultValue": text(result, "DefaultValue"),
+                  "ordinal": integer(text(result, "Ordinal")),
+                  "precision": integer(text(result, "Precision")),
+                  "scale": integer(text(result, "Scale")),
               }
 
               if not field["name"]:
-                  print(
-                      "::error::SFMC returned a field "
-                      "without Name."
-                  )
+                  print("::error::SFMC returned a field without Name.")
                   sys.exit(1)
 
               if not field["fieldType"]:
                   print(
-                      "::error::SFMC returned field "
-                      f"'{field['name']}' without FieldType."
+                      f"::error::SFMC returned field '{field['name']}' "
+                      "without FieldType."
                   )
                   sys.exit(1)
 
@@ -768,34 +759,21 @@ jobs:
 
           fields.sort(
               key=lambda field: (
-                  (
-                      field["ordinal"]
-                      if field["ordinal"] is not None
-                      else 999999
-                  ),
+                  field["ordinal"]
+                  if field["ordinal"] is not None
+                  else 999999,
                   field["name"],
               )
           )
 
-          with open(
-              "de-fields.json",
-              "w",
-              encoding="utf-8",
-          ) as file:
-              json.dump(
-                  fields,
-                  file,
-                  indent=2,
-                  ensure_ascii=False,
-              )
+          with open("de-fields.json", "w", encoding="utf-8") as f:
+              json.dump(fields, f, indent=2, ensure_ascii=False)
 
-          print(
-              f"Retrieved {len(fields)} "
-              "Data Extension field(s)."
-          )
+          print(f"Retrieved {len(fields)} Data Extension field(s).")
           PY
 
           rm -f de-fields-response.xml
+          rm -f retrievable-field-properties.json
 
       - name: Build normalized definition
         id: definition
@@ -818,56 +796,33 @@ jobs:
           import os
           import sys
 
-          with open(
-              "de-metadata.json",
-              encoding="utf-8",
-          ) as file:
-              metadata = json.load(file)
+          with open("de-metadata.json", encoding="utf-8") as f:
+              metadata = json.load(f)
 
-          with open(
-              "de-fields.json",
-              encoding="utf-8",
-          ) as file:
-              fields = json.load(file)
+          with open("de-fields.json", encoding="utf-8") as f:
+              fields = json.load(f)
 
           requested_key = os.environ["CUSTOMER_KEY"]
 
           if metadata.get("customerKey") != requested_key:
-              print(
-                  "::error::Metadata CustomerKey "
-                  "validation failed."
-              )
+              print("::error::Metadata CustomerKey validation failed.")
               sys.exit(1)
 
           if not metadata.get("name"):
-              print(
-                  "::error::Data Extension Name is missing."
-              )
+              print("::error::Data Extension Name is missing.")
               sys.exit(1)
 
           if not fields:
-              print(
-                  "::error::Data Extension contains "
-                  "no retrieved fields."
-              )
+              print("::error::Data Extension contains no retrieved fields.")
               sys.exit(1)
 
           definition = {
               "assetType": "DataExtension",
               "name": metadata["name"],
               "customerKey": metadata["customerKey"],
-              "description": metadata.get(
-                  "description",
-                  "",
-              ),
-              "isSendable": metadata.get(
-                  "isSendable",
-                  False,
-              ),
-              "isTestable": metadata.get(
-                  "isTestable",
-                  False,
-              ),
+              "description": metadata.get("description", ""),
+              "isSendable": metadata.get("isSendable", False),
+              "isTestable": metadata.get("isTestable", False),
               "fields": fields,
           }
 
@@ -879,22 +834,16 @@ jobs:
               "definition.json",
           )
 
-          with open(
-              target_file,
-              "w",
-              encoding="utf-8",
-          ) as file:
+          with open(target_file, "w", encoding="utf-8") as f:
               json.dump(
                   definition,
-                  file,
+                  f,
                   indent=2,
                   ensure_ascii=False,
               )
-              file.write("\n")
+              f.write("\n")
 
-          print(
-              f"Normalized definition created: {target_file}"
-          )
+          print(f"Normalized definition created: {target_file}")
           PY
 
           rm -f de-metadata.json
@@ -911,48 +860,37 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ ! -f "$TARGET_FILE" ]; then
+          [ -f "$TARGET_FILE" ] || {
             echo "::error::Generated definition does not exist."
             exit 1
-          fi
+          }
 
           jq empty "$TARGET_FILE"
 
-          GENERATED_TYPE="$(
-            jq -r '.assetType // empty' "$TARGET_FILE"
-          )"
+          GENERATED_TYPE="$(jq -r '.assetType // empty' "$TARGET_FILE")"
+          GENERATED_KEY="$(jq -r '.customerKey // empty' "$TARGET_FILE")"
+          GENERATED_NAME="$(jq -r '.name // empty' "$TARGET_FILE")"
+          FIELD_COUNT="$(jq '.fields | length' "$TARGET_FILE")"
 
-          GENERATED_KEY="$(
-            jq -r '.customerKey // empty' "$TARGET_FILE"
-          )"
-
-          GENERATED_NAME="$(
-            jq -r '.name // empty' "$TARGET_FILE"
-          )"
-
-          FIELD_COUNT="$(
-            jq '.fields | length' "$TARGET_FILE"
-          )"
-
-          if [ "$GENERATED_TYPE" != "DataExtension" ]; then
+          [ "$GENERATED_TYPE" = "DataExtension" ] || {
             echo "::error::Invalid assetType in generated definition."
             exit 1
-          fi
+          }
 
-          if [ "$GENERATED_KEY" != "$CUSTOMER_KEY" ]; then
-            echo "::error::Generated CustomerKey does not match requested CustomerKey."
+          [ "$GENERATED_KEY" = "$CUSTOMER_KEY" ] || {
+            echo "::error::Generated CustomerKey doesn't match requested CustomerKey."
             exit 1
-          fi
+          }
 
-          if [ -z "$GENERATED_NAME" ]; then
+          [ -n "$GENERATED_NAME" ] || {
             echo "::error::Generated definition has no Data Extension name."
             exit 1
-          fi
+          }
 
-          if [ "$FIELD_COUNT" -le 0 ]; then
+          [ "$FIELD_COUNT" -gt 0 ] || {
             echo "::error::Generated definition contains no fields."
             exit 1
-          fi
+          }
 
           echo "Generated definition validation successful."
 
@@ -978,7 +916,6 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         shell: bash
         env:
-          TARGET_DIRECTORY: ${{ steps.definition.outputs.target_directory }}
           CUSTOMER_KEY: ${{ steps.input.outputs.customer_key }}
         run: |
           set -euo pipefail
