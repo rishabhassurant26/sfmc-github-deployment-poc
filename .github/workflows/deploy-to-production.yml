@@ -734,7 +734,14 @@ jobs:
               return True, ""
 
           def create_de(desired):
-              fields = "".join(field_xml(field) for field in desired["fields"])
+              # CREATE requires one Fields collection containing Field children.
+              # Keep field_xml unchanged because UPDATE already uses it.
+              fields = "<Fields>" + "".join(
+                  field_xml(field)
+                      .replace("<Fields>", "<Field>", 1)
+                      .replace("</Fields>", "</Field>", 1)
+                  for field in desired["fields"]
+              ) + "</Fields>"
 
               body = f"""
           <CreateRequest xmlns="{API_NS}">
