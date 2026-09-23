@@ -7,6 +7,19 @@ on:
     paths:
       - "sfmc-assets/**"
   workflow_dispatch:
+    inputs:
+      deployment_mode:
+        description: "Deploy one approved DE or reconcile all approved DEs"
+        required: true
+        type: choice
+        default: asset
+        options:
+          - asset
+          - full
+      customer_key:
+        description: "Exact approved CustomerKey (required for asset mode)"
+        required: false
+        type: string
 permissions:
   contents: read
 
@@ -23,8 +36,8 @@ jobs:
       - name: Checkout approved main branch
         uses: actions/checkout@v6
         with:
-          ref: main
-          fetch-depth: 1
+          persist-credentials: false
+          fetch-depth: 0
 
       - name: Validate configuration
         id: config
@@ -102,7 +115,92 @@ jobs:
           echo "POC production target BU MID: $PRODUCTION_MID"
           echo "Data Extension root: $DE_ROOT"
 
+      - name: Select approved changed Data Extensions
+        id: select
+        shell: bash
+        env:
+          DE_ROOT: ${{ steps.config.outputs.de_root }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          EVENT_AFTER: ${{ github.sha }}
+          DEPLOYMENT_MODE: ${{ inputs.deployment_mode }}
+          CUSTOMER_KEY: ${{ inputs.customer_key }}
+        run: |
+          set -euo pipefail
+          python3 <<'PYSELECT'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          root = Path(os.environ["DE_ROOT"])
+          definitions = sorted(root.glob("*/definition.json"))
+          approved = {str(path): path for path in definitions}
+          event = os.environ["EVENT_NAME"]
+          selected = []
+
+          def git(*args):
+              return subprocess.check_output(["git", *args]).decode().strip()
+
+          # Never deploy a stale push over a newer main revision.
+          if event == "push":
+              remote_main = git("ls-remote", "https://github.com/" + os.environ["GITHUB_REPOSITORY"] + ".git", "refs/heads/main").split()[0]
+              if remote_main != os.environ["EVENT_AFTER"]:
+                  sys.exit("This push is no longer the latest main revision. Stop; use manual reconciliation after latest main is reviewed.")
+              before = os.environ["EVENT_BEFORE"]
+              after = os.environ["EVENT_AFTER"]
+              if not re.fullmatch(r"[0-9a-f]{40}", before) or before == "0" * 40:
+                  sys.exit("Push has no usable before SHA. Use reviewed manual full reconciliation for bootstrap.")
+              if not re.fullmatch(r"[0-9a-f]{40}", after):
+                  sys.exit("Push has no valid after SHA.")
+              subprocess.run(["git", "cat-file", "-e", before + "^{commit}"], check=True)
+              # --no-renames makes removal/rename of approved metadata explicit and fail-closed.
+              raw = subprocess.check_output([
+                  "git", "diff", "--no-renames", "--name-status", "-z",
+                  before, after, "--", str(root)
+              ])
+              parts = raw.decode().split("\0")
+              changes = list(zip(parts[0::2], parts[1::2]))
+              for status, path in changes:
+                  if not status:
+                      continue
+                  if status.startswith("D"):
+                      sys.exit(f"Deleted asset detected: {path}. Automatic Production deletion is forbidden; restore metadata or handle via separately reviewed process.")
+                  if path not in approved:
+                      sys.exit(f"Changed asset is not a supported approved DE definition: {path}. Review asset layout/configuration.")
+                  selected.append(path)
+          elif event == "workflow_dispatch":
+              mode = os.environ.get("DEPLOYMENT_MODE", "")
+              if mode == "full":
+                  selected = list(approved)
+              elif mode == "asset":
+                  key = os.environ.get("CUSTOMER_KEY", "")
+                  if not key or key in (".", "..") or "/" in key or "\\" in key:
+                      sys.exit("Manual asset mode requires one valid exact CustomerKey.")
+                  path = str(root / key / "definition.json")
+                  if path not in approved:
+                      sys.exit(f"CustomerKey {key!r} has no approved definition on main.")
+                  selected = [path]
+              else:
+                  sys.exit("Unsupported manual deployment mode.")
+          else:
+              sys.exit(f"Unsupported event: {event}")
+
+          selected = sorted(set(selected))
+          Path("/tmp/selected-de-definitions.txt").write_text(
+              "".join(path + "\n" for path in selected)
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"count={len(selected)}\n")
+              output.write(f"has_assets={'true' if selected else 'false'}\n")
+          print(f"Approved DEs selected for this run: {len(selected)}")
+          for path in selected:
+              print("Selected:", path)
+          PYSELECT
+
       - name: Validate SFMC credentials
+        if: steps.select.outputs.has_assets == 'true'
         shell: bash
         env:
           SFMC_AUTH_BASE_URI: ${{ secrets.SFMC_AUTH_BASE_URI }}
@@ -127,6 +225,7 @@ jobs:
           fi
 
       - name: Discover and validate approved Data Extensions
+        if: steps.select.outputs.has_assets == 'true'
         id: discover
         shell: bash
         env:
@@ -134,14 +233,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t DEFINITIONS < <(
-            find "$DE_ROOT" \
-              -mindepth 2 \
-              -maxdepth 2 \
-              -type f \
-              -name 'definition.json' \
-              -print | sort
-          )
+          mapfile -t DEFINITIONS < /tmp/selected-de-definitions.txt
 
           if [ "${#DEFINITIONS[@]}" -eq 0 ]; then
             echo "::error::No approved Data Extension definitions found."
@@ -217,6 +309,7 @@ jobs:
           echo "Approved Data Extensions discovered: $COUNT"
 
       - name: Authenticate to POC production target BU
+        if: steps.select.outputs.has_assets == 'true'
         id: auth
         shell: bash
         env:
@@ -278,6 +371,7 @@ jobs:
           echo "POC production target BU MID: $PRODUCTION_MID"
 
       - name: Deploy approved Data Extensions
+        if: steps.select.outputs.has_assets == 'true'
         id: deploy
         shell: bash
         env:
@@ -962,7 +1056,7 @@ jobs:
           PY
 
       - name: Final deployment status
-        if: success()
+        if: success() && steps.select.outputs.has_assets == 'true'
         shell: bash
         env:
           LOB: ${{ steps.config.outputs.lob }}
@@ -981,3 +1075,8 @@ jobs:
             echo "- Source of truth: \`main\`"
             echo "- Data rows deployed: \`No\`"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: No Data Extension changes
+        if: success() && steps.select.outputs.has_assets == 'false'
+        shell: bash
+        run: |
+          echo "No approved Data Extension metadata changed. No SFMC authentication or deployment was performed." >> "$GITHUB_STEP_SUMMARY"
