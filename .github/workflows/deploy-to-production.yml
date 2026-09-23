@@ -893,11 +893,14 @@ jobs:
                   for field in actual_fields
               }
 
+              # Existing DE updates and new field creation are separate SOAP operations.
+              # A DataExtension Update can report OK while ignoring new <Fields>
+              # without an ObjectID. Do not silently accept that response.
               fields_xml = []
+              new_fields = []
 
               for desired_field in desired["fields"]:
                   existing = actual_by_name.get(desired_field["name"])
-
                   if existing:
                       merged = dict(desired_field)
                       merged["objectId"] = existing["objectId"]
@@ -905,7 +908,7 @@ jobs:
                           field_xml(merged, include_object_id=True)
                       )
                   else:
-                      fields_xml.append(field_xml(desired_field))
+                      new_fields.append(desired_field)
 
               body = f"""
           <UpdateRequest xmlns="{API_NS}">
@@ -945,6 +948,43 @@ jobs:
                       f"{desired['customerKey']}: Update failed: "
                       + " | ".join(errors)
                   )
+
+              # Create only fields absent from the original Production snapshot.
+              # Re-retrieve before each create so retry after a partial run is safe.
+              for new_field in new_fields:
+                  live_names = {f["name"] for f in retrieve_fields(desired["customerKey"])}
+                  if new_field["name"] in live_names:
+                      continue
+                  field_parts = field_xml(new_field)
+                  field_parts = field_parts.replace("<Fields>", "", 1).replace("</Fields>", "", 1)
+                  create_body = f"""
+          <CreateRequest xmlns="{API_NS}">
+            <Options />
+            <Objects xsi:type="DataExtensionField">
+              <DataExtension>
+                <CustomerKey>{esc(desired['customerKey'])}</CustomerKey>
+              </DataExtension>
+              {field_parts}
+            </Objects>
+          </CreateRequest>
+          """
+                  create_root = soap_call("Create", create_body)
+                  create_status = text_of(create_root, "OverallStatus") or "UNKNOWN"
+                  create_results = [
+                      node for node in create_root.iter()
+                      if node.tag.split("}")[-1] == "Results"
+                  ]
+                  if (create_status != "OK" or len(create_results) != 1
+                          or (text_of(create_results[0], "StatusCode") or "") != "OK"):
+                      details = " | ".join(
+                          f"{text_of(r, 'StatusCode')}: {text_of(r, 'StatusMessage')}"
+                          for r in create_results
+                      )
+                      raise RuntimeError(
+                          f"{desired['customerKey']}: creating field {new_field['name']} "
+                          f"failed: {create_status}; {details}"
+                      )
+                  print(f"Created missing Production field: {new_field['name']}")
 
           results = []
           failed = False
