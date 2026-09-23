@@ -64,7 +64,7 @@
     {
       "name": "Phone",
       "fieldType": "Phone",
-      "maxLength": 55,
+      "maxLength": 50,
       "isPrimaryKey": false,
       "isRequired": false,
       "defaultValue": null,
