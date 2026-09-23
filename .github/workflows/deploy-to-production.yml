@@ -893,19 +893,19 @@ jobs:
                   for field in actual_fields
               }
 
-              # SFMC DataExtension expects one Fields collection of Field children.
-              # Existing fields include ObjectID; new fields omit ObjectID.
-              # Do not issue standalone DataExtensionField Create requests.
-              field_children = []
+              fields_xml = []
+
               for desired_field in desired["fields"]:
                   existing = actual_by_name.get(desired_field["name"])
-                  merged = dict(desired_field)
+
                   if existing:
+                      merged = dict(desired_field)
                       merged["objectId"] = existing["objectId"]
-                  field_child = field_xml(merged, include_object_id=bool(existing))
-                  field_child = field_child.replace("<Fields>", "<Field>", 1).replace("</Fields>", "</Field>", 1)
-                  field_children.append(field_child)
-              fields_xml = "<Fields>" + "".join(field_children) + "</Fields>"
+                      fields_xml.append(
+                          field_xml(merged, include_object_id=True)
+                      )
+                  else:
+                      fields_xml.append(field_xml(desired_field))
 
               body = f"""
           <UpdateRequest xmlns="{API_NS}">
@@ -917,7 +917,7 @@ jobs:
               <Description>{esc(desired['description'])}</Description>
               <IsSendable>{bool_text(desired['isSendable'])}</IsSendable>
               <IsTestable>{bool_text(desired['isTestable'])}</IsTestable>
-              {fields_xml}
+              {''.join(fields_xml)}
             </Objects>
           </UpdateRequest>
           """
