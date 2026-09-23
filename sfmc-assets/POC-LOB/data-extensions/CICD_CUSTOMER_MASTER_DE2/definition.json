@@ -2,7 +2,7 @@
   "assetType": "DataExtension",
   "name": "CICD_CUSTOMER_MASTER_DE2",
   "customerKey": "CICD_CUSTOMER_MASTER_DE2",
-  "description": "Customer master data extension ",
+  "description": "Selective GitHub CI CD Deployment Test",
   "isSendable": false,
   "isTestable": false,
   "fields": [
