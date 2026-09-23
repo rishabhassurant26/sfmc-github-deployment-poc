@@ -17,14 +17,15 @@ concurrency:
 
 jobs:
   retrieve-from-sandbox:
-    name: Retrieve Sandbox Assets
+    name: Retrieve Sandbox Asset
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout sandbox branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: sandbox
+          fetch-depth: 0
 
       - name: Validate configuration
         id: config
@@ -46,17 +47,17 @@ jobs:
           DE_DIRECTORY="$(jq -r '.assetTypes.dataExtensions.directory // empty' "$CONFIG_FILE")"
 
           if [ -z "$LOB" ]; then
-            echo "::error::lineOfBusiness is missing in $CONFIG_FILE"
+            echo "::error::lineOfBusiness is missing."
             exit 1
           fi
 
           if [ -z "$ASSET_ROOT" ]; then
-            echo "::error::assetRoot is missing in $CONFIG_FILE"
+            echo "::error::assetRoot is missing."
             exit 1
           fi
 
           if [ -z "$SANDBOX_MID" ]; then
-            echo "::error::Sandbox Business Unit MID is missing in $CONFIG_FILE"
+            echo "::error::Sandbox Business Unit MID is missing."
             exit 1
           fi
 
@@ -66,33 +67,39 @@ jobs:
           fi
 
           if [ "$DE_ENABLED" != "true" ]; then
-            echo "::error::Data Extension retrieval is disabled in $CONFIG_FILE"
+            echo "::error::Data Extension retrieval is disabled."
             exit 1
           fi
 
           if [ -z "$DE_DIRECTORY" ]; then
-            echo "::error::Data Extension directory is missing in $CONFIG_FILE"
+            echo "::error::Data Extension directory is missing."
             exit 1
           fi
+
+          # Prevent configuration values from escaping the repository path.
+          for VALUE in "$LOB" "$ASSET_ROOT" "$DE_DIRECTORY"; do
+            if [[ "$VALUE" == /* || "$VALUE" == *".."* || "$VALUE" == *"\\"* ]]; then
+              echo "::error::Unsafe path value detected in configuration: $VALUE"
+              exit 1
+            fi
+          done
 
           echo "lob=$LOB" >> "$GITHUB_OUTPUT"
           echo "asset_root=$ASSET_ROOT" >> "$GITHUB_OUTPUT"
           echo "sandbox_mid=$SANDBOX_MID" >> "$GITHUB_OUTPUT"
           echo "de_directory=$DE_DIRECTORY" >> "$GITHUB_OUTPUT"
 
-          echo "Configuration validation successful."
-          echo "LOB: $LOB"
-          echo "Sandbox MID: $SANDBOX_MID"
+          echo "Configuration validated."
 
       - name: Validate workflow input
         id: input
         shell: bash
         env:
-          CUSTOMER_KEY: ${{ inputs.customer_key }}
+          RAW_CUSTOMER_KEY: ${{ inputs.customer_key }}
         run: |
           set -euo pipefail
 
-          CUSTOMER_KEY="$(printf '%s' "$CUSTOMER_KEY" | xargs)"
+          CUSTOMER_KEY="$(printf '%s' "$RAW_CUSTOMER_KEY" | xargs)"
 
           if [ -z "$CUSTOMER_KEY" ]; then
             echo "::error::Customer Key cannot be empty."
@@ -109,10 +116,14 @@ jobs:
             exit 1
           fi
 
-          echo "customer_key=$CUSTOMER_KEY" >> "$GITHUB_OUTPUT"
-          echo "Customer Key input validated."
+          if [[ "$CUSTOMER_KEY" =~ [[:cntrl:]] ]]; then
+            echo "::error::Customer Key contains invalid control characters."
+            exit 1
+          fi
 
-      - name: Validate required GitHub secrets
+          echo "customer_key=$CUSTOMER_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Validate GitHub secrets
         shell: bash
         env:
           SFMC_CLIENT_ID: ${{ secrets.SFMC_CLIENT_ID }}
@@ -121,31 +132,28 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "$SFMC_CLIENT_ID" ]; then
-            echo "::error::Repository secret SFMC_CLIENT_ID is missing."
+          [ -n "$SFMC_CLIENT_ID" ] || {
+            echo "::error::SFMC_CLIENT_ID is missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$SFMC_CLIENT_SECRET" ]; then
-            echo "::error::Repository secret SFMC_CLIENT_SECRET is missing."
+          [ -n "$SFMC_CLIENT_SECRET" ] || {
+            echo "::error::SFMC_CLIENT_SECRET is missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$SFMC_AUTH_BASE_URI" ]; then
-            echo "::error::Repository secret SFMC_AUTH_BASE_URI is missing."
+          [ -n "$SFMC_AUTH_BASE_URI" ] || {
+            echo "::error::SFMC_AUTH_BASE_URI is missing."
             exit 1
-          fi
+          }
 
           case "$SFMC_AUTH_BASE_URI" in
-            https://*)
-              ;;
+            https://*) ;;
             *)
               echo "::error::SFMC_AUTH_BASE_URI must use HTTPS."
               exit 1
               ;;
           esac
-
-          echo "Required GitHub secrets are configured."
 
       - name: Authenticate to SFMC Sandbox
         id: auth
@@ -188,13 +196,13 @@ jobs:
 
           if [ "$HTTP_STATUS" != "200" ]; then
             ERROR_MESSAGE="$(
-              jq -r '.message // .error_description // .error // "Unknown authentication error"' \
-              token-response.json 2>/dev/null || true
+              jq -r \
+                '.message // .error_description // .error // "Unknown authentication error"' \
+                token-response.json 2>/dev/null || true
             )"
 
-            echo "::error::SFMC authentication failed. HTTP status: $HTTP_STATUS"
-            echo "::error::SFMC response: $ERROR_MESSAGE"
-
+            echo "::error::SFMC authentication failed. HTTP $HTTP_STATUS"
+            echo "::error::$ERROR_MESSAGE"
             rm -f token-response.json
             exit 1
           fi
@@ -204,25 +212,18 @@ jobs:
           SOAP_INSTANCE_URL="$(jq -r '.soap_instance_url // empty' token-response.json)"
           EXPIRES_IN="$(jq -r '.expires_in // empty' token-response.json)"
 
-          if [ -z "$ACCESS_TOKEN" ]; then
-            echo "::error::SFMC returned HTTP 200 but access_token is missing."
+          [ -n "$ACCESS_TOKEN" ] || {
+            echo "::error::access_token missing from SFMC response."
             rm -f token-response.json
             exit 1
-          fi
+          }
 
-          if [ -z "$REST_INSTANCE_URL" ]; then
-            echo "::error::SFMC returned HTTP 200 but rest_instance_url is missing."
+          [ -n "$SOAP_INSTANCE_URL" ] || {
+            echo "::error::soap_instance_url missing from SFMC response."
             rm -f token-response.json
             exit 1
-          fi
+          }
 
-          if [ -z "$SOAP_INSTANCE_URL" ]; then
-            echo "::error::SFMC returned HTTP 200 but soap_instance_url is missing."
-            rm -f token-response.json
-            exit 1
-          fi
-
-          # Protect sensitive runtime values from GitHub log output.
           echo "::add-mask::$ACCESS_TOKEN"
           echo "::add-mask::$REST_INSTANCE_URL"
           echo "::add-mask::$SOAP_INSTANCE_URL"
@@ -234,19 +235,522 @@ jobs:
 
           rm -f token-response.json
 
-          echo "SFMC Sandbox authentication successful."
+          echo "SFMC authentication successful."
 
-      - name: Authentication summary
+      - name: Retrieve Data Extension metadata
+        id: metadata
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_INSTANCE_URL: ${{ steps.auth.outputs.soap_instance_url }}
+          CUSTOMER_KEY: ${{ steps.input.outputs.customer_key }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import html
+          import os
+
+          customer_key = os.environ["CUSTOMER_KEY"]
+
+          envelope = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <s:Envelope
+              xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+              xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+              xmlns:fueloauth="http://exacttarget.com">
+            <s:Header>
+              <fueloauth:fueloauth>{html.escape(os.environ["ACCESS_TOKEN"])}</fueloauth:fueloauth>
+            </s:Header>
+            <s:Body xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+              <RetrieveRequestMsg xmlns="http://exacttarget.com/wsdl/partnerAPI">
+                <RetrieveRequest>
+                  <ObjectType>DataExtension</ObjectType>
+                  <Properties>ObjectID</Properties>
+                  <Properties>CustomerKey</Properties>
+                  <Properties>Name</Properties>
+                  <Properties>Description</Properties>
+                  <Properties>IsSendable</Properties>
+                  <Properties>IsTestable</Properties>
+                  <Properties>CategoryID</Properties>
+                  <Filter xsi:type="SimpleFilterPart">
+                    <Property>CustomerKey</Property>
+                    <SimpleOperator>equals</SimpleOperator>
+                    <Value>{html.escape(customer_key)}</Value>
+                  </Filter>
+                </RetrieveRequest>
+              </RetrieveRequestMsg>
+            </s:Body>
+          </s:Envelope>
+          """
+
+          with open("de-metadata-request.xml", "w", encoding="utf-8") as f:
+              f.write(envelope)
+          PY
+
+          SOAP_ENDPOINT="${SOAP_INSTANCE_URL%/}/Service.asmx"
+
+          HTTP_STATUS="$(
+            curl \
+              --silent \
+              --show-error \
+              --output de-metadata-response.xml \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "Content-Type: application/soap+xml; charset=UTF-8" \
+              --data-binary @de-metadata-request.xml \
+              "$SOAP_ENDPOINT"
+          )"
+
+          rm -f de-metadata-request.xml
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Data Extension metadata retrieval failed. HTTP $HTTP_STATUS"
+            sed -n '1,40p' de-metadata-response.xml || true
+            rm -f de-metadata-response.xml
+            exit 1
+          fi
+
+          python3 <<'PY'
+          import json
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          response_file = "de-metadata-response.xml"
+          requested_key = os.environ["CUSTOMER_KEY"]
+
+          ns = {
+              "soap": "http://www.w3.org/2003/05/soap-envelope",
+              "et": "http://exacttarget.com/wsdl/partnerAPI",
+          }
+
+          try:
+              root = ET.parse(response_file).getroot()
+          except ET.ParseError as exc:
+              print(f"::error::Invalid SOAP XML returned by SFMC: {exc}")
+              sys.exit(1)
+
+          fault = root.find(".//soap:Fault", ns)
+          if fault is not None:
+              reason = fault.find(".//soap:Text", ns)
+              message = reason.text if reason is not None else "Unknown SOAP fault"
+              print(f"::error::SFMC SOAP fault: {message}")
+              sys.exit(1)
+
+          status = root.find(".//et:OverallStatus", ns)
+          if status is not None and status.text not in ("OK", "Has More Rows"):
+              print(f"::error::SFMC retrieve status: {status.text}")
+              sys.exit(1)
+
+          results = root.findall(".//et:Results", ns)
+
+          if len(results) == 0:
+              print(
+                  f"::error::No Data Extension found in the configured Sandbox BU "
+                  f"with Customer Key '{requested_key}'."
+              )
+              sys.exit(1)
+
+          if len(results) > 1:
+              print(
+                  f"::error::More than one Data Extension was returned for "
+                  f"Customer Key '{requested_key}'."
+              )
+              sys.exit(1)
+
+          result = results[0]
+
+          def text(name):
+              node = result.find(f"et:{name}", ns)
+              if node is None or node.text is None:
+                  return None
+              return node.text
+
+          returned_key = text("CustomerKey")
+
+          if returned_key != requested_key:
+              print(
+                  f"::error::Returned CustomerKey '{returned_key}' does not match "
+                  f"requested CustomerKey '{requested_key}'."
+              )
+              sys.exit(1)
+
+          metadata = {
+              "objectId": text("ObjectID"),
+              "customerKey": returned_key,
+              "name": text("Name"),
+              "description": text("Description") or "",
+              "isSendable": (text("IsSendable") or "").lower() == "true",
+              "isTestable": (text("IsTestable") or "").lower() == "true",
+              "categoryId": int(text("CategoryID")) if text("CategoryID") else None,
+          }
+
+          with open("de-metadata.json", "w", encoding="utf-8") as f:
+              json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+          print(
+              f"Found Data Extension: {metadata['name']} "
+              f"({metadata['customerKey']})"
+          )
+          PY
+
+          rm -f de-metadata-response.xml
+
+          echo "found=true" >> "$GITHUB_OUTPUT"
+
+      - name: Retrieve Data Extension fields
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_INSTANCE_URL: ${{ steps.auth.outputs.soap_instance_url }}
+          CUSTOMER_KEY: ${{ steps.input.outputs.customer_key }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import html
+          import os
+
+          customer_key = os.environ["CUSTOMER_KEY"]
+
+          envelope = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <s:Envelope
+              xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+              xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+              xmlns:fueloauth="http://exacttarget.com">
+            <s:Header>
+              <fueloauth:fueloauth>{html.escape(os.environ["ACCESS_TOKEN"])}</fueloauth:fueloauth>
+            </s:Header>
+            <s:Body xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+              <RetrieveRequestMsg xmlns="http://exacttarget.com/wsdl/partnerAPI">
+                <RetrieveRequest>
+                  <ObjectType>DataExtensionField</ObjectType>
+
+                  <Properties>ObjectID</Properties>
+                  <Properties>CustomerKey</Properties>
+                  <Properties>Name</Properties>
+                  <Properties>FieldType</Properties>
+                  <Properties>MaxLength</Properties>
+                  <Properties>IsPrimaryKey</Properties>
+                  <Properties>IsRequired</Properties>
+                  <Properties>DefaultValue</Properties>
+                  <Properties>Ordinal</Properties>
+                  <Properties>Precision</Properties>
+                  <Properties>Scale</Properties>
+
+                  <Filter xsi:type="SimpleFilterPart">
+                    <Property>DataExtension.CustomerKey</Property>
+                    <SimpleOperator>equals</SimpleOperator>
+                    <Value>{html.escape(customer_key)}</Value>
+                  </Filter>
+                </RetrieveRequest>
+              </RetrieveRequestMsg>
+            </s:Body>
+          </s:Envelope>
+          """
+
+          with open("de-fields-request.xml", "w", encoding="utf-8") as f:
+              f.write(envelope)
+          PY
+
+          SOAP_ENDPOINT="${SOAP_INSTANCE_URL%/}/Service.asmx"
+
+          HTTP_STATUS="$(
+            curl \
+              --silent \
+              --show-error \
+              --output de-fields-response.xml \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "Content-Type: application/soap+xml; charset=UTF-8" \
+              --data-binary @de-fields-request.xml \
+              "$SOAP_ENDPOINT"
+          )"
+
+          rm -f de-fields-request.xml
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Data Extension field retrieval failed. HTTP $HTTP_STATUS"
+            sed -n '1,40p' de-fields-response.xml || true
+            rm -f de-fields-response.xml
+            exit 1
+          fi
+
+          python3 <<'PY'
+          import json
+          import sys
+          import xml.etree.ElementTree as ET
+
+          ns = {
+              "soap": "http://www.w3.org/2003/05/soap-envelope",
+              "et": "http://exacttarget.com/wsdl/partnerAPI",
+          }
+
+          try:
+              root = ET.parse("de-fields-response.xml").getroot()
+          except ET.ParseError as exc:
+              print(f"::error::Invalid SOAP XML returned by SFMC: {exc}")
+              sys.exit(1)
+
+          fault = root.find(".//soap:Fault", ns)
+          if fault is not None:
+              reason = fault.find(".//soap:Text", ns)
+              message = reason.text if reason is not None else "Unknown SOAP fault"
+              print(f"::error::SFMC SOAP fault: {message}")
+              sys.exit(1)
+
+          status = root.find(".//et:OverallStatus", ns)
+          if status is not None and status.text not in ("OK", "Has More Rows"):
+              print(f"::error::SFMC retrieve status: {status.text}")
+              sys.exit(1)
+
+          results = root.findall(".//et:Results", ns)
+
+          if not results:
+              print("::error::No fields were returned for the Data Extension.")
+              sys.exit(1)
+
+          def node_text(result, name):
+              node = result.find(f"et:{name}", ns)
+              if node is None or node.text is None:
+                  return None
+              return node.text
+
+          def boolean(value):
+              return (value or "").lower() == "true"
+
+          def integer(value):
+              if value is None or value == "":
+                  return None
+              try:
+                  return int(value)
+              except ValueError:
+                  return None
+
+          fields = []
+
+          for result in results:
+              field = {
+                  "name": node_text(result, "Name"),
+                  "fieldType": node_text(result, "FieldType"),
+                  "maxLength": integer(node_text(result, "MaxLength")),
+                  "isPrimaryKey": boolean(node_text(result, "IsPrimaryKey")),
+                  "isRequired": boolean(node_text(result, "IsRequired")),
+                  "defaultValue": node_text(result, "DefaultValue"),
+                  "ordinal": integer(node_text(result, "Ordinal")),
+                  "precision": integer(node_text(result, "Precision")),
+                  "scale": integer(node_text(result, "Scale")),
+              }
+
+              if not field["name"]:
+                  print("::error::SFMC returned a field without a Name.")
+                  sys.exit(1)
+
+              if not field["fieldType"]:
+                  print(
+                      f"::error::SFMC returned field '{field['name']}' "
+                      "without FieldType."
+                  )
+                  sys.exit(1)
+
+              fields.append(field)
+
+          fields.sort(
+              key=lambda x: (
+                  x["ordinal"] if x["ordinal"] is not None else 999999,
+                  x["name"],
+              )
+          )
+
+          with open("de-fields.json", "w", encoding="utf-8") as f:
+              json.dump(fields, f, indent=2, ensure_ascii=False)
+
+          print(f"Retrieved {len(fields)} Data Extension field(s).")
+          PY
+
+          rm -f de-fields-response.xml
+
+      - name: Build normalized definition
+        id: definition
+        shell: bash
+        env:
+          LOB: ${{ steps.config.outputs.lob }}
+          ASSET_ROOT: ${{ steps.config.outputs.asset_root }}
+          DE_DIRECTORY: ${{ steps.config.outputs.de_directory }}
+          CUSTOMER_KEY: ${{ steps.input.outputs.customer_key }}
+        run: |
+          set -euo pipefail
+
+          TARGET_DIRECTORY="${ASSET_ROOT}/${LOB}/${DE_DIRECTORY}/${CUSTOMER_KEY}"
+          TARGET_FILE="${TARGET_DIRECTORY}/definition.json"
+
+          mkdir -p "$TARGET_DIRECTORY"
+
+          python3 <<'PY'
+          import json
+          import os
+          import sys
+
+          with open("de-metadata.json", encoding="utf-8") as f:
+              metadata = json.load(f)
+
+          with open("de-fields.json", encoding="utf-8") as f:
+              fields = json.load(f)
+
+          requested_key = os.environ["CUSTOMER_KEY"]
+
+          if metadata.get("customerKey") != requested_key:
+              print("::error::Metadata CustomerKey validation failed.")
+              sys.exit(1)
+
+          if not metadata.get("name"):
+              print("::error::Data Extension Name is missing.")
+              sys.exit(1)
+
+          if not fields:
+              print("::error::Data Extension contains no retrieved fields.")
+              sys.exit(1)
+
+          definition = {
+              "assetType": "DataExtension",
+              "name": metadata["name"],
+              "customerKey": metadata["customerKey"],
+              "description": metadata.get("description", ""),
+              "isSendable": metadata.get("isSendable", False),
+              "isTestable": metadata.get("isTestable", False),
+              "fields": fields,
+          }
+
+          target_file = os.path.join(
+              os.environ["ASSET_ROOT"],
+              os.environ["LOB"],
+              os.environ["DE_DIRECTORY"],
+              requested_key,
+              "definition.json",
+          )
+
+          with open(target_file, "w", encoding="utf-8") as f:
+              json.dump(
+                  definition,
+                  f,
+                  indent=2,
+                  ensure_ascii=False,
+              )
+              f.write("\n")
+
+          print(f"Normalized definition created: {target_file}")
+          PY
+
+          rm -f de-metadata.json de-fields.json
+
+          echo "target_directory=$TARGET_DIRECTORY" >> "$GITHUB_OUTPUT"
+          echo "target_file=$TARGET_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Validate generated definition
+        shell: bash
+        env:
+          TARGET_FILE: ${{ steps.definition.outputs.target_file }}
+          CUSTOMER_KEY: ${{ steps.input.outputs.customer_key }}
+        run: |
+          set -euo pipefail
+
+          [ -f "$TARGET_FILE" ] || {
+            echo "::error::Generated definition does not exist."
+            exit 1
+          }
+
+          jq empty "$TARGET_FILE"
+
+          GENERATED_TYPE="$(jq -r '.assetType // empty' "$TARGET_FILE")"
+          GENERATED_KEY="$(jq -r '.customerKey // empty' "$TARGET_FILE")"
+          GENERATED_NAME="$(jq -r '.name // empty' "$TARGET_FILE")"
+          FIELD_COUNT="$(jq '.fields | length' "$TARGET_FILE")"
+
+          [ "$GENERATED_TYPE" = "DataExtension" ] || {
+            echo "::error::Invalid assetType in generated definition."
+            exit 1
+          }
+
+          [ "$GENERATED_KEY" = "$CUSTOMER_KEY" ] || {
+            echo "::error::Generated CustomerKey does not match requested CustomerKey."
+            exit 1
+          }
+
+          [ -n "$GENERATED_NAME" ] || {
+            echo "::error::Generated definition has no Data Extension name."
+            exit 1
+          }
+
+          [ "$FIELD_COUNT" -gt 0 ] || {
+            echo "::error::Generated definition contains no fields."
+            exit 1
+          }
+
+          echo "Generated definition validation successful."
+
+      - name: Detect repository changes
+        id: changes
+        shell: bash
+        env:
+          TARGET_DIRECTORY: ${{ steps.definition.outputs.target_directory }}
+        run: |
+          set -euo pipefail
+
+          git add -- "$TARGET_DIRECTORY"
+
+          if git diff --cached --quiet -- "$TARGET_DIRECTORY"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No asset changes detected."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Asset changes detected."
+          fi
+
+      - name: Commit retrieved asset to sandbox
+        if: steps.changes.outputs.changed == 'true'
+        shell: bash
+        env:
+          TARGET_DIRECTORY: ${{ steps.definition.outputs.target_directory }}
+          CUSTOMER_KEY: ${{ steps.input.outputs.customer_key }}
+          LOB: ${{ steps.config.outputs.lob }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git commit \
+            -m "Sync SFMC Sandbox Data Extension: ${CUSTOMER_KEY}"
+
+          git push origin HEAD:sandbox
+
+          echo "Retrieved asset committed to sandbox."
+
+      - name: Retrieval summary
         if: success()
         shell: bash
         env:
           LOB: ${{ steps.config.outputs.lob }}
           SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
           CUSTOMER_KEY: ${{ steps.input.outputs.customer_key }}
-          EXPIRES_IN: ${{ steps.auth.outputs.expires_in }}
+          TARGET_FILE: ${{ steps.definition.outputs.target_file }}
+          CHANGED: ${{ steps.changes.outputs.changed }}
         run: |
+          set -euo pipefail
+
+          NAME="$(jq -r '.name' "$TARGET_FILE")"
+          FIELD_COUNT="$(jq '.fields | length' "$TARGET_FILE")"
+
+          if [ "$CHANGED" = "true" ]; then
+            REPOSITORY_RESULT="Committed to sandbox"
+          else
+            REPOSITORY_RESULT="No change required"
+          fi
+
           {
-            echo "## SFMC Sandbox Authentication"
+            echo "## SFMC Sandbox Retrieval"
             echo ""
             echo "| Item | Value |"
             echo "|---|---|"
@@ -254,9 +758,10 @@ jobs:
             echo "| Line of Business | \`$LOB\` |"
             echo "| Business Unit MID | \`$SANDBOX_MID\` |"
             echo "| Asset Type | Data Extension |"
-            echo "| Requested Customer Key | \`$CUSTOMER_KEY\` |"
-            echo "| OAuth Authentication | SUCCESS |"
-            echo "| Token Lifetime Returned | \`${EXPIRES_IN:-Not returned}\` seconds |"
-            echo ""
-            echo "> No SFMC asset has been retrieved or modified in this step."
+            echo "| Customer Key | \`$CUSTOMER_KEY\` |"
+            echo "| Data Extension | \`$NAME\` |"
+            echo "| Fields Retrieved | $FIELD_COUNT |"
+            echo "| Definition | \`$TARGET_FILE\` |"
+            echo "| Repository Result | $REPOSITORY_RESULT |"
+            echo "| Workflow Result | SUCCESS |"
           } >> "$GITHUB_STEP_SUMMARY"
