@@ -60,17 +60,6 @@
       "ordinal": 4,
       "precision": null,
       "scale": null
-    },
-    {
-      "name": "City",
-      "fieldType": "Text",
-      "maxLength": 50,
-      "isPrimaryKey": false,
-      "isRequired": false,
-      "defaultValue": null,
-      "ordinal": 5,
-      "precision": null,
-      "scale": null
     }
   ]
 }
