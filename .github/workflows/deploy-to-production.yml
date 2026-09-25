@@ -910,10 +910,14 @@ jobs:
                       f"ResultCount={len(results)}; " + " | ".join(messages)
                   )
 
-          def delete_removed_fields(desired, actual_de, actual_fields):
+                    def delete_removed_fields(desired, actual_de, actual_fields):
               customer_key = desired["customerKey"]
               desired_names = {field["name"] for field in desired["fields"]}
-              removed = [field for field in actual_fields if field["name"] not in desired_names]
+              removed = [
+                  field
+                  for field in actual_fields
+                  if field["name"] not in desired_names
+              ]
 
               if not removed:
                   return
@@ -921,21 +925,30 @@ jobs:
               for field in removed:
                   if bool(field.get("isPrimaryKey")):
                       raise RuntimeError(
-                          f"{customer_key}: refusing to delete primary-key field {field['name']}."
-                      )
-                  if not field.get("objectId"):
-                      raise RuntimeError(
-                          f"{customer_key}: cannot safely delete field {field['name']} because ObjectID is missing."
+                          f"{customer_key}: refusing to delete primary-key "
+                          f"field {field['name']}."
                       )
 
-                  # Salesforce SOAP UpdateOptions supports dropping DE child fields
-                  # when Action=DELETE and Container is the DataExtensionField.
+                  if not field.get("objectId"):
+                      raise RuntimeError(
+                          f"{customer_key}: cannot safely delete field "
+                          f"{field['name']} because ObjectID is missing."
+                      )
+
+                  # Delete an approved Data Extension child field.
+                  #
+                  # UpdateOptions.Container is a ContainerID.
+                  # The DataExtensionField API object must therefore be
+                  # nested inside Container/APIObject rather than assigning
+                  # DataExtensionField directly as the Container type.
                   body = f"""
           <UpdateRequest xmlns="{API_NS}">
             <Options>
               <Action>DELETE</Action>
-              <Container xsi:type="DataExtensionField">
-                <ObjectID>{esc(field['objectId'])}</ObjectID>
+              <Container>
+                <APIObject xsi:type="DataExtensionField">
+                  <ObjectID>{esc(field['objectId'])}</ObjectID>
+                </APIObject>
               </Container>
             </Options>
             <Objects xsi:type="DataExtension">
@@ -944,19 +957,31 @@ jobs:
             </Objects>
           </UpdateRequest>
           """
+
                   require_update_ok(
                       soap_call("Update", body),
                       customer_key,
                       f"delete approved field {field['name']}",
                   )
 
+                  # Never trust only the SOAP success response.
+                  # Retrieve the live Production schema again and verify
+                  # that the approved field is actually gone.
                   live = retrieve_fields(customer_key)
-                  if field["name"] in {item["name"] for item in live}:
+
+                  if field["name"] in {
+                      item["name"] for item in live
+                  }:
                       raise RuntimeError(
-                          f"{customer_key}: Salesforce accepted deletion of {field['name']} "
-                          "but verification still found the field."
+                          f"{customer_key}: Salesforce accepted deletion of "
+                          f"{field['name']} but verification still found "
+                          "the field."
                       )
-                  print(f"Confirmed approved Production field deletion: {field['name']}")
+
+                  print(
+                      "Confirmed approved Production field deletion: "
+                      f"{field['name']}"
+                  )
 
           def update_de(desired, actual_de, actual_fields):
               customer_key = desired["customerKey"]
