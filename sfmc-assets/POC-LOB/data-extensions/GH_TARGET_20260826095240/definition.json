@@ -2,7 +2,7 @@
   "assetType": "DataExtension",
   "name": "GH_TARGET_20260826095240",
   "customerKey": "GH_TARGET_20260826095240",
-  "description": "          GitHub POC - copied from existing SFMC DE with record        ",
+  "description": "          GitHub POC - copied from existing SFMC DE with records ",
   "isSendable": false,
   "isTestable": false,
   "fields": [
@@ -47,6 +47,17 @@
       "isRequired": false,
       "defaultValue": null,
       "ordinal": 3,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "Phone",
+      "fieldType": "Phone",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 4,
       "precision": null,
       "scale": null
     }
