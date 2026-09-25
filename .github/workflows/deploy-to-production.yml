@@ -25,6 +25,11 @@ on:
         description: "Exact approved CustomerKey (required for asset mode)"
         required: false
         type: string
+      approve_field_deletion:
+        description: "Approve deletion of Production field(s) absent from GitHub main (manual asset mode only)"
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: read
 
@@ -382,6 +387,9 @@ jobs:
         shell: bash
         env:
           PRODUCTION_MID: ${{ steps.config.outputs.production_mid }}
+          EVENT_NAME: ${{ github.event_name }}
+          DEPLOYMENT_MODE: ${{ inputs.deployment_mode }}
+          APPROVE_FIELD_DELETION: ${{ inputs.approve_field_deletion }}
         run: |
           set -euo pipefail
 
@@ -759,21 +767,38 @@ jobs:
               return "".join(parts)
 
           def check_update_safety(desired, actual_fields):
-              desired_by_name = {
-                  field["name"]: field
-                  for field in desired["fields"]
-              }
-              actual_by_name = {
-                  field["name"]: field
-                  for field in actual_fields
-              }
+              desired_by_name = {field["name"]: field for field in desired["fields"]}
+              actual_by_name = {field["name"]: field for field in actual_fields}
 
               removed = sorted(set(actual_by_name) - set(desired_by_name))
               if removed:
-                  return False, (
-                      "GitHub definition removes existing Production field(s): "
-                      + ", ".join(removed)
+                  # Destructive field removal is NEVER automatic on a push.
+                  # It is allowed only on an explicit manual asset-mode run where
+                  # the operator checked approve_field_deletion=true.
+                  manual_delete_approved = (
+                      os.environ.get("EVENT_NAME") == "workflow_dispatch"
+                      and os.environ.get("DEPLOYMENT_MODE") == "asset"
+                      and os.environ.get("APPROVE_FIELD_DELETION", "").lower() == "true"
                   )
+
+                  if not manual_delete_approved:
+                      return False, (
+                          "DESTRUCTIVE CHANGE DETECTED. GitHub main removes existing "
+                          "Production field(s): " + ", ".join(removed) + ". "
+                          "No field was deleted. Review the change, then run this workflow "
+                          "manually in asset mode for this exact CustomerKey and set "
+                          "approve_field_deletion=true if deletion is intended."
+                      )
+
+                  protected = [
+                      name for name in removed
+                      if bool(actual_by_name[name].get("isPrimaryKey"))
+                  ]
+                  if protected:
+                      return False, (
+                          "Approved deletion still blocked because primary-key field(s) "
+                          "cannot be removed by this pipeline: " + ", ".join(protected)
+                      )
 
               for name in sorted(set(actual_by_name) & set(desired_by_name)):
                   old = actual_by_name[name]
@@ -786,46 +811,28 @@ jobs:
                       )
 
                   if bool(old["isPrimaryKey"]) != bool(new["isPrimaryKey"]):
-                      return False, (
-                          f"Field {name}: primary-key change is blocked."
-                      )
+                      return False, f"Field {name}: primary-key change is blocked."
 
                   old_length = old.get("maxLength")
                   new_length = new.get("maxLength")
-
-                  if (
-                      old_length is not None
-                      and new_length is not None
-                      and new_length < old_length
-                  ):
+                  if (old_length is not None and new_length is not None and new_length < old_length):
                       return False, (
                           f"Field {name}: MaxLength reduction "
                           f"{old_length} -> {new_length} is blocked."
                       )
 
-                  if (
-                      not bool(old["isRequired"])
-                      and bool(new["isRequired"])
-                  ):
-                      return False, (
-                          f"Field {name}: optional -> required change is blocked."
-                      )
+                  if not bool(old["isRequired"]) and bool(new["isRequired"]):
+                      return False, f"Field {name}: optional -> required change is blocked."
 
               new_fields = sorted(set(desired_by_name) - set(actual_by_name))
-
               for name in new_fields:
                   field = desired_by_name[name]
-
                   if bool(field.get("isPrimaryKey")):
                       return False, (
                           f"New field {name}: adding a new primary-key field "
                           "to an existing DE is blocked."
                       )
-
-                  if (
-                      bool(field.get("isRequired"))
-                      and field.get("defaultValue") in (None, "")
-                  ):
+                  if bool(field.get("isRequired")) and field.get("defaultValue") in (None, ""):
                       return False, (
                           f"New field {name}: required field without a default "
                           "value is blocked for an existing DE."
@@ -903,8 +910,63 @@ jobs:
                       f"ResultCount={len(results)}; " + " | ".join(messages)
                   )
 
+          def delete_removed_fields(desired, actual_de, actual_fields):
+              customer_key = desired["customerKey"]
+              desired_names = {field["name"] for field in desired["fields"]}
+              removed = [field for field in actual_fields if field["name"] not in desired_names]
+
+              if not removed:
+                  return
+
+              for field in removed:
+                  if bool(field.get("isPrimaryKey")):
+                      raise RuntimeError(
+                          f"{customer_key}: refusing to delete primary-key field {field['name']}."
+                      )
+                  if not field.get("objectId"):
+                      raise RuntimeError(
+                          f"{customer_key}: cannot safely delete field {field['name']} because ObjectID is missing."
+                      )
+
+                  # Salesforce SOAP UpdateOptions supports dropping DE child fields
+                  # when Action=DELETE and Container is the DataExtensionField.
+                  body = f"""
+          <UpdateRequest xmlns="{API_NS}">
+            <Options>
+              <Action>DELETE</Action>
+              <Container xsi:type="DataExtensionField">
+                <ObjectID>{esc(field['objectId'])}</ObjectID>
+              </Container>
+            </Options>
+            <Objects xsi:type="DataExtension">
+              <ObjectID>{esc(actual_de['objectId'])}</ObjectID>
+              <CustomerKey>{esc(customer_key)}</CustomerKey>
+            </Objects>
+          </UpdateRequest>
+          """
+                  require_update_ok(
+                      soap_call("Update", body),
+                      customer_key,
+                      f"delete approved field {field['name']}",
+                  )
+
+                  live = retrieve_fields(customer_key)
+                  if field["name"] in {item["name"] for item in live}:
+                      raise RuntimeError(
+                          f"{customer_key}: Salesforce accepted deletion of {field['name']} "
+                          "but verification still found the field."
+                      )
+                  print(f"Confirmed approved Production field deletion: {field['name']}")
+
           def update_de(desired, actual_de, actual_fields):
               customer_key = desired["customerKey"]
+
+              # Destructive changes arrive here only after check_update_safety()
+              # has confirmed an explicit manual approval.
+              delete_removed_fields(desired, actual_de, actual_fields)
+
+              # Re-read fields after any approved deletion before normal additive updates.
+              actual_fields = retrieve_fields(customer_key)
               actual_by_name = {f["name"]: f for f in actual_fields}
               missing = [f for f in desired["fields"] if f["name"] not in actual_by_name]
 
