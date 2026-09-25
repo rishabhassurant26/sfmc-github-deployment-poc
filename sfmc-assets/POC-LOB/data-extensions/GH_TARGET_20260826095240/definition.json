@@ -2,7 +2,7 @@
   "assetType": "DataExtension",
   "name": "GH_TARGET_20260826095240",
   "customerKey": "GH_TARGET_20260826095240",
-  "description": "\n          GitHub POC - copied from existing SFMC DE with records\n        ",
+  "description": "          GitHub POC - copied from existing SFMC DE with record        ",
   "isSendable": false,
   "isTestable": false,
   "fields": [
