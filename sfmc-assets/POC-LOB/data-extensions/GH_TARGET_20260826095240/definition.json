@@ -1,0 +1,54 @@
+{
+  "assetType": "DataExtension",
+  "name": "GH_TARGET_20260826095240",
+  "customerKey": "GH_TARGET_20260826095240",
+  "description": "\n          GitHub POC - copied from existing SFMC DE with records\n        ",
+  "isSendable": false,
+  "isTestable": false,
+  "fields": [
+    {
+      "name": "CustomerID",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": true,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 0,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "FirstName",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 1,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "Email",
+      "fieldType": "EmailAddress",
+      "maxLength": 254,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 2,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "Status",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 3,
+      "precision": null,
+      "scale": null
+    }
+  ]
+}
