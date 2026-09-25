@@ -1,0 +1,230 @@
+{
+  "assetType": "DataExtension",
+  "name": "MBI_Survey_Responses",
+  "customerKey": "7128EF87-E6D7-4D64-9D11-B7D8D2F4A1BF",
+  "description": "",
+  "isSendable": true,
+  "isTestable": false,
+  "fields": [
+    {
+      "name": "EmailAddress",
+      "fieldType": "Text",
+      "maxLength": 250,
+      "isPrimaryKey": true,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 0,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "SurveyDate",
+      "fieldType": "Date",
+      "maxLength": null,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 1,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q1_HadContact",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 2,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q2_OverallSat",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 3,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q3_StaffSat",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 4,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q4_TimeReasonable",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 5,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q5_NPS_Assurant",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 6,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q6_ImproveComments",
+      "fieldType": "Text",
+      "maxLength": 500,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 7,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q7_RepairerNPS",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 8,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q8_RepairerReason",
+      "fieldType": "Text",
+      "maxLength": 500,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 9,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q9a_BookingEasy",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 10,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q9b_RepairerPro",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 11,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q10_BookingMethod",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 12,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q11a_ExplainedProc",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 13,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q11b_ExplainedCosts",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 14,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q11c_Updates",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 15,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q11d_FixedFirst",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 16,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q11e_HighStandard",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 17,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q12_OverallRepairer",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 18,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Q13_RepairerImprove",
+      "fieldType": "Text",
+      "maxLength": 500,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 19,
+      "precision": null,
+      "scale": 0
+    }
+  ]
+}
