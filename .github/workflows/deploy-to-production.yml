@@ -904,18 +904,20 @@ jobs:
                   )
 
           def update_de(desired, actual_de, actual_fields):
+              customer_key = desired["customerKey"]
               actual_by_name = {f["name"]: f for f in actual_fields}
               missing = [f for f in desired["fields"] if f["name"] not in actual_by_name]
 
-              # Salesforce's Add Column operation: UPDATE the parent DataExtension
-              # with ONLY the new Field, not a standalone DataExtensionField CREATE.
-              # Keep payload minimal; Ordinal is system-controlled on existing DEs.
+              # Add ONLY genuinely new fields. Never resend existing field datatypes.
               for field in missing:
-                  live = retrieve_fields(desired["customerKey"])
+                  live = retrieve_fields(customer_key)
                   if field["name"] in {f["name"] for f in live}:
                       continue
-                  parts = [f"<Name>{esc(field['name'])}</Name>",
-                           f"<FieldType>{esc(field['fieldType'])}</FieldType>"]
+
+                  parts = [
+                      f"<Name>{esc(field['name'])}</Name>",
+                      f"<FieldType>{esc(field['fieldType'])}</FieldType>",
+                  ]
                   if field.get("maxLength") is not None:
                       parts.append(f"<MaxLength>{int(field['maxLength'])}</MaxLength>")
                   parts.append(f"<IsRequired>{bool_text(field.get('isRequired', False))}</IsRequired>")
@@ -925,56 +927,86 @@ jobs:
                       parts.append(f"<Precision>{int(field['precision'])}</Precision>")
                   if field.get("scale") is not None:
                       parts.append(f"<Scale>{int(field['scale'])}</Scale>")
+
                   body = f"""
           <UpdateRequest xmlns="{API_NS}">
             <Options />
             <Objects xsi:type="DataExtension">
-              <CustomerKey>{esc(desired['customerKey'])}</CustomerKey>
+              <ObjectID>{esc(actual_de['objectId'])}</ObjectID>
+              <CustomerKey>{esc(customer_key)}</CustomerKey>
               <Fields><Field>{''.join(parts)}</Field></Fields>
             </Objects>
           </UpdateRequest>
           """
-                  require_update_ok(soap_call("Update", body), desired["customerKey"],
-                                    f"add field {field['name']}")
-                  confirmed = retrieve_fields(desired["customerKey"])
+                  require_update_ok(
+                      soap_call("Update", body),
+                      customer_key,
+                      f"add field {field['name']}",
+                  )
+
+                  confirmed = retrieve_fields(customer_key)
                   if field["name"] not in {f["name"] for f in confirmed}:
-                      raise RuntimeError(f"{desired['customerKey']}: API accepted add field {field['name']} "
-                                         "but subsequent retrieve did not find it")
+                      raise RuntimeError(
+                          f"{customer_key}: API accepted add field {field['name']} "
+                          "but subsequent retrieve did not find it"
+                      )
                   print(f"Confirmed new Production field: {field['name']}")
 
-              # Re-read after additions; skip any unnecessary UPDATE of existing
-              # fields, avoiding needless writes to a Production DE.
-              current_de = retrieve_de(desired["customerKey"])
-              current_fields = retrieve_fields(desired["customerKey"])
-              if normalized_actual(current_de, current_fields) == desired:
-                  return
-              current_by_name = {f["name"]: f for f in current_fields}
-              # Preserve the proven existing-field update behavior for metadata
-              # changes, with IDs; never attempt to re-add already-present fields.
-              field_children = []
-              for field in desired["fields"]:
-                  merged = dict(field)
-                  merged["objectId"] = current_by_name[field["name"]]["objectId"]
-                  child = field_xml(merged, include_object_id=True)
-                  child = child.replace("<Fields>", "<Field>", 1).replace("</Fields>", "</Field>", 1)
-                  field_children.append(child)
-              fields_xml = "<Fields>" + "".join(field_children) + "</Fields>"
-              body = f"""
+              # Re-read after field additions.
+              current_de = retrieve_de(customer_key)
+              if current_de is None:
+                  raise RuntimeError(
+                      f"{customer_key}: Data Extension not found after field update."
+                  )
+
+              # Parent metadata must be updated separately from Fields.
+              # This prevents SFMC from interpreting unchanged FieldType values
+              # as attempts to change immutable existing field datatypes.
+              parent_changed = (
+                  current_de["name"] != desired["name"]
+                  or (current_de.get("description") or "") != (desired.get("description") or "")
+                  or bool(current_de.get("isSendable", False)) != bool(desired.get("isSendable", False))
+                  or bool(current_de.get("isTestable", False)) != bool(desired.get("isTestable", False))
+              )
+
+              if parent_changed:
+                  body = f"""
           <UpdateRequest xmlns="{API_NS}">
             <Options />
             <Objects xsi:type="DataExtension">
               <ObjectID>{esc(current_de['objectId'])}</ObjectID>
-              <CustomerKey>{esc(desired['customerKey'])}</CustomerKey>
+              <CustomerKey>{esc(customer_key)}</CustomerKey>
               <Name>{esc(desired['name'])}</Name>
               <Description>{esc(desired['description'])}</Description>
               <IsSendable>{bool_text(desired['isSendable'])}</IsSendable>
               <IsTestable>{bool_text(desired['isTestable'])}</IsTestable>
-              {fields_xml}
             </Objects>
           </UpdateRequest>
           """
-              require_update_ok(soap_call("Update", body), desired["customerKey"],
-                                "update existing metadata")
+                  require_update_ok(
+                      soap_call("Update", body),
+                      customer_key,
+                      "update Data Extension parent metadata",
+                  )
+                  print(f"Confirmed Production parent metadata update: {customer_key}")
+
+              # Final reconciliation inside the update operation.
+              final_de = retrieve_de(customer_key)
+              if final_de is None:
+                  raise RuntimeError(
+                      f"{customer_key}: Data Extension not found after update."
+                  )
+              final_fields = retrieve_fields(customer_key)
+              final_actual = normalized_actual(final_de, final_fields)
+
+              if final_actual != desired:
+                  raise RuntimeError(
+                      f"{customer_key}: Production definition still differs from GitHub main after safe update. "
+                      + "Expected=" + json.dumps(desired, sort_keys=True)
+                      + "; Actual=" + json.dumps(final_actual, sort_keys=True)
+                  )
+
+              print(f"Production Data Extension reconciled successfully: {customer_key}")
 
           results = []
           failed = False
