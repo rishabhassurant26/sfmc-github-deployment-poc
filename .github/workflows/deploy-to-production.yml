@@ -910,7 +910,7 @@ jobs:
                       f"ResultCount={len(results)}; " + " | ".join(messages)
                   )
 
-                    def delete_removed_fields(desired, actual_de, actual_fields):
+          def delete_removed_fields(desired, actual_de, actual_fields):
               customer_key = desired["customerKey"]
               desired_names = {field["name"] for field in desired["fields"]}
               removed = [
