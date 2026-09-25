@@ -1,0 +1,54 @@
+{
+  "assetType": "DataExtension",
+  "name": "PI_CONTENT",
+  "customerKey": "PI_CONTENT",
+  "description": "PI_CONTENT",
+  "isSendable": false,
+  "isTestable": false,
+  "fields": [
+    {
+      "name": "content_id",
+      "fieldType": "Text",
+      "maxLength": 256,
+      "isPrimaryKey": false,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 1,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "availability",
+      "fieldType": "Boolean",
+      "maxLength": null,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 2,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "title",
+      "fieldType": "Text",
+      "maxLength": 1000,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 3,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "uuid",
+      "fieldType": "Text",
+      "maxLength": 256,
+      "isPrimaryKey": true,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 4,
+      "precision": null,
+      "scale": null
+    }
+  ]
+}
