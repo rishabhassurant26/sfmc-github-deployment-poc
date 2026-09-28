@@ -1,96 +1,128 @@
-name: Deploy SFMC Assets to Production
 
-on:
-  push:
-    branches:
-      - main
-    paths:
-      - "sfmc-assets/**"
-  workflow_dispatch:
-    inputs:
-      notification_test:
-        description: "Test Slack notification without accessing SFMC or deploying assets"
-        required: false
-        type: boolean
-        default: false
-      deployment_mode:
-        description: "Deploy one approved DE or reconcile all approved DEs"
-        required: true
-        type: choice
-        default: asset
-        options:
-          - asset
-          - full
-      customer_key:
-        description: "Exact approved CustomerKey (required for asset mode)"
-        required: false
-        type: string
-permissions:
-  contents: read
+          } >> "$GITHUB_STEP_SUMMARY"
 
-concurrency:
-  group: sfmc-production-deployment
-  cancel-in-progress: false
+      - name: No Data Extension changes
 
-jobs:
-  deploy-data-extensions:
-    name: Deploy Data Extensions
-    if: ${{ !inputs.notification_test }}
+        if: success() && steps.select.outputs.has_assets == 'false'
+
+        shell: bash
+
+        run: |
+
+          echo "No approved Data Extension metadata changed. No SFMC authentication or deployment was performed." >> "$GITHUB_STEP_SUMMARY"
+
+  notify-on-failure:
+
+    name: Notify deployment failure
+
+    needs: [deploy-data-extensions]
+
+    if: ${{ always() && (needs.deploy-data-extensions.result == 'failure' || (github.event_name == 'workflow_dispatch' && inputs.notification_test)) }}
+
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout approved main branch
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          fetch-depth: 0
 
-      - name: Validate configuration
-        id: config
+      - name: Send Slack failure or test notification
+
         shell: bash
+
+        env:
+
+          SLACK_WEBHOOK_URL: ${{ secrets.SFMC_DEPLOYMENT_SLACK_WEBHOOK_URL }}
+
+          DEPLOY_RESULT: ${{ needs.deploy-data-extensions.result }}
+
+          NOTIFICATION_TEST: ${{ inputs.notification_test }}
+
+          REPO: ${{ github.repository }}
+
+          RUN_ID: ${{ github.run_id }}
+
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+
+          SHA: ${{ github.sha }}
+
+          ACTOR: ${{ github.actor }}
+
+          EVENT_NAME: ${{ github.event_name }}
+
         run: |
+
           set -euo pipefail
 
-          CONFIG_FILE="config/lob-config.json"
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
 
-          if [ ! -f "$CONFIG_FILE" ]; then
-            echo "::error::Missing configuration file: $CONFIG_FILE"
+            echo "::error::Missing secret SFMC_DEPLOYMENT_SLACK_WEBHOOK_URL; cannot send required notification."
+
             exit 1
+
           fi
 
-          jq -e . "$CONFIG_FILE" > /dev/null
+          case "$SLACK_WEBHOOK_URL" in
 
-          SCHEMA_VERSION=$(jq -r '.schemaVersion // empty' "$CONFIG_FILE")
-          LOB=$(jq -r '.lineOfBusiness // empty' "$CONFIG_FILE")
-          ASSET_ROOT=$(jq -r '.assetRoot // empty' "$CONFIG_FILE")
-          PRODUCTION_MID=$(jq -r '.environments.production.businessUnitMid // empty' "$CONFIG_FILE")
+            https://*) ;;
 
-          DE_ENABLED=$(jq -r '.assetTypes.dataExtensions.enabled // false' "$CONFIG_FILE")
-          DE_DIRECTORY=$(jq -r '.assetTypes.dataExtensions.directory // empty' "$CONFIG_FILE")
+            *) echo "::error::Slack webhook must use HTTPS."; exit 1 ;;
 
-          if [ -z "$SCHEMA_VERSION" ]; then
-            echo "::error::schemaVersion is missing."
-            exit 1
+          esac
+
+          echo "::add-mask::$SLACK_WEBHOOK_URL"
+
+          if [ "$NOTIFICATION_TEST" = "true" ]; then
+
+            EVENT_LABEL="TEST ONLY: SFMC deployment failure notification (no deployment attempted)"
+
+          else
+
+            EVENT_LABEL="SFMC Production deployment FAILED"
+
           fi
 
-          if [ -z "$LOB" ]; then
-            echo "::error::lineOfBusiness is missing."
+          RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}"
+
+          PAYLOAD="$(jq -n \\
+
+            --arg label "$EVENT_LABEL" \\
+
+            --arg repo "$REPO" \\
+
+            --arg sha "$SHA" \\
+
+            --arg actor "$ACTOR" \\
+
+            --arg event "$EVENT_NAME" \\
+
+            --arg run "$RUN_URL" \\
+
+            '{text: ($label + "\nRepository: " + $repo + "\nEvent: " + $event + "\nCommit: " + $sha + "\nActor: " + $actor + "\nLogs and deployment summary: " + $run)}')"
+
+          HTTP_STATUS="$(curl --silent --show-error --output /tmp/slack-response.txt \\
+
+            --write-out '%{http_code}' --retry 2 --retry-delay 2 \\
+
+            --request POST --header 'Content-Type: application/json' \\
+
+            --data "$PAYLOAD" "$SLACK_WEBHOOK_URL")"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+
+            echo "::error::Slack notification failed (HTTP $HTTP_STATUS)."
+
             exit 1
+
           fi
 
-          if [ -z "$ASSET_ROOT" ]; then
-            echo "::error::assetRoot is missing."
-            exit 1
+          echo "Slack notification sent successfully."
+
+          if [ "$NOTIFICATION_TEST" = "true" ]; then
+
+            echo "### Slack notification TEST (no SFMC deployment)" >> "$GITHUB_STEP_SUMMARY"
+
+          else
+
+            echo "### Slack failure notification delivered" >> "$GITHUB_STEP_SUMMARY"
+
           fi
 
-          if [ -z "$PRODUCTION_MID" ]; then
-            echo "::error::Production businessUnitMid is missing."
-            exit 1
-          fi
-
-          if ! [[ "$PRODUCTION_MID" =~ ^[0-9]+$ ]]; then
-            echo "::error::Production businessUnitMid must be numeric."
-            exit 1
-          fi
-
-          if [ "$DE_ENABLED" != "true" ]; then
+          echo "[View run logs]($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
