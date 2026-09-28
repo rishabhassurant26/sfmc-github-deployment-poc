@@ -49,17 +49,6 @@
       "ordinal": 3,
       "precision": null,
       "scale": null
-    },
-    {
-      "name": "phone",
-      "fieldType": "Phone",
-      "maxLength": 50,
-      "isPrimaryKey": false,
-      "isRequired": false,
-      "defaultValue": null,
-      "ordinal": 4,
-      "precision": null,
-      "scale": null
     }
   ]
 }
