@@ -769,11 +769,16 @@ jobs:
               }
 
               removed = sorted(set(actual_by_name) - set(desired_by_name))
-              if removed:
-                  return False, (
-                      "GitHub definition removes existing Production field(s): "
-                      + ", ".join(removed)
-                  )
+              for name in removed:
+                  field = actual_by_name[name]
+                  if bool(field.get("isPrimaryKey")):
+                      return False, (
+                          f"Field {name}: automatic deletion of a primary-key field is blocked."
+                      )
+                  if not field.get("objectId"):
+                      return False, (
+                          f"Field {name}: automatic deletion requires the Production field ObjectID."
+                      )
 
               for name in sorted(set(actual_by_name) & set(desired_by_name)):
                   old = actual_by_name[name]
@@ -902,6 +907,77 @@ jobs:
                       f"{customer_key}: {operation} rejected: OverallStatus={overall}; "
                       f"ResultCount={len(results)}; " + " | ".join(messages)
                   )
+
+          def delete_removed_fields(desired, actual_de, actual_fields):
+              customer_key = desired["customerKey"]
+              desired_names = {field["name"] for field in desired["fields"]}
+              removed_names = sorted(
+                  field["name"]
+                  for field in actual_fields
+                  if field["name"] not in desired_names
+              )
+
+              for field_name in removed_names:
+                  # Re-read immediately before every destructive operation so that
+                  # the ObjectID and primary-key status come from live Production.
+                  live_fields = retrieve_fields(customer_key)
+                  live_by_name = {field["name"]: field for field in live_fields}
+                  live_field = live_by_name.get(field_name)
+
+                  if live_field is None:
+                      print(f"Production field already absent: {field_name}")
+                      continue
+
+                  if bool(live_field.get("isPrimaryKey")):
+                      raise RuntimeError(
+                          f"{customer_key}: automatic deletion of primary-key field "
+                          f"{field_name} is blocked."
+                      )
+
+                  field_object_id = live_field.get("objectId")
+                  if not field_object_id:
+                      raise RuntimeError(
+                          f"{customer_key}: cannot delete field {field_name}; "
+                          "Production ObjectID is missing."
+                      )
+
+                  # Salesforce UpdateOptions documentation specifies that when
+                  # Container is a DataExtensionField and Action is DELETE,
+                  # child fields in the DataExtension update are dropped.
+                  body = f"""
+          <UpdateRequest xmlns="{API_NS}">
+            <Options>
+              <Action>DELETE</Action>
+              <Container xsi:type="DataExtensionField" />
+            </Options>
+            <Objects xsi:type="DataExtension">
+              <ObjectID>{esc(actual_de['objectId'])}</ObjectID>
+              <CustomerKey>{esc(customer_key)}</CustomerKey>
+              <Fields>
+                <Field>
+                  <ObjectID>{esc(field_object_id)}</ObjectID>
+                  <Name>{esc(field_name)}</Name>
+                </Field>
+              </Fields>
+            </Objects>
+          </UpdateRequest>
+          """
+
+                  require_update_ok(
+                      soap_call("Update", body),
+                      customer_key,
+                      f"delete field {field_name}",
+                  )
+
+                  confirmed = retrieve_fields(customer_key)
+                  if field_name in {field["name"] for field in confirmed}:
+                      raise RuntimeError(
+                          f"{customer_key}: Salesforce accepted deletion of "
+                          f"{field_name} but verification still found the field."
+                      )
+
+                  print(f"Confirmed Production field deletion: {field_name}")
+
 
           def update_de(desired, actual_de, actual_fields):
               customer_key = desired["customerKey"]
@@ -1047,6 +1123,14 @@ jobs:
 
                           if not safe:
                               raise RuntimeError(reason)
+
+                          delete_removed_fields(
+                              desired,
+                              existing,
+                              production_fields,
+                          )
+
+                          production_fields = retrieve_fields(customer_key)
 
                           update_de(
                               desired,
