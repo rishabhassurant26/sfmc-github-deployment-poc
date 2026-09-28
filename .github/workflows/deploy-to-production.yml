@@ -942,32 +942,26 @@ jobs:
                           "Production ObjectID is missing."
                       )
 
-                  # Salesforce UpdateOptions documentation specifies that when
-                  # Container is a DataExtensionField and Action is DELETE,
-                  # child fields in the DataExtension update are dropped.
+                  # Delete the child DataExtension field through the parent
+                  # DataExtension. The field ObjectID identifies the exact column.
                   body = f"""
-          <UpdateRequest xmlns="{API_NS}">
-            <Options>
-              <Container>
-                <APIObject xsi:type="DataExtensionField" />
-              </Container>
-              <Action>DELETE</Action>
-            </Options>
+          <DeleteRequest xmlns="{API_NS}">
+            <Options />
             <Objects xsi:type="DataExtension">
-              <ObjectID>{esc(actual_de['objectId'])}</ObjectID>
+              <PartnerKey xsi:nil="true" />
+              <ObjectID xsi:nil="true" />
               <CustomerKey>{esc(customer_key)}</CustomerKey>
               <Fields>
                 <Field>
                   <ObjectID>{esc(field_object_id)}</ObjectID>
-                  <Name>{esc(field_name)}</Name>
                 </Field>
               </Fields>
             </Objects>
-          </UpdateRequest>
+          </DeleteRequest>
           """
 
                   require_update_ok(
-                      soap_call("Update", body),
+                      soap_call("Delete", body),
                       customer_key,
                       f"delete field {field_name}",
                   )
@@ -976,7 +970,7 @@ jobs:
                   # becomes visible to a subsequent Retrieve. Poll the live schema
                   # instead of treating the first immediate Retrieve as failure.
                   deletion_confirmed = False
-                  max_attempts = 36
+                  max_attempts = 60
                   poll_seconds = 5
 
                   for attempt in range(1, max_attempts + 1):
