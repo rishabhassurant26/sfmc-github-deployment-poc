@@ -1,125 +1,96 @@
+name: Deploy SFMC Assets to Production
 
-              results.append({
-                  "customerKey": customer_key,
-                  "action": action,
-                  "verification": verification,
-                  "detail": detail,
-              })
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "sfmc-assets/**"
+  workflow_dispatch:
+    inputs:
+      notification_test:
+        description: "Test Slack notification without accessing SFMC or deploying assets"
+        required: false
+        type: boolean
+        default: false
+      deployment_mode:
+        description: "Deploy one approved DE or reconcile all approved DEs"
+        required: true
+        type: choice
+        default: asset
+        options:
+          - asset
+          - full
+      customer_key:
+        description: "Exact approved CustomerKey (required for asset mode)"
+        required: false
+        type: string
+permissions:
+  contents: read
 
-          Path("/tmp/deployment-results.json").write_text(
-              json.dumps(results, indent=2)
-          )
+concurrency:
+  group: sfmc-production-deployment
+  cancel-in-progress: false
 
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              summary.write("# SFMC Production Deployment Summary\n\n")
-              summary.write(
-                  f"**POC production target BU MID:** "
-                  f"`{os.environ['PRODUCTION_MID']}`\n\n"
-              )
-              summary.write("| Customer Key | Action | Verification | Details |\n")
-              summary.write("|---|---|---|---|\n")
-
-              for result in results:
-                  detail = result["detail"].replace("|", "\\|").replace("\n", " ")
-                  summary.write(
-                      f"| `{result['customerKey']}` "
-                      f"| **{result['action']}** "
-                      f"| **{result['verification']}** "
-                      f"| {detail or '-'} |\n"
-                  )
-
-          for result in results:
-              print(
-                  f"{result['customerKey']}: "
-                  f"{result['action']} / {result['verification']}"
-              )
-              if result["detail"]:
-                  print(f"  {result['detail']}")
-
-          if failed:
-              sys.exit(1)
-          PY
-
-      - name: Final deployment status
-        if: success() && steps.select.outputs.has_assets == 'true'
-        shell: bash
-        env:
-          LOB: ${{ steps.config.outputs.lob }}
-          PRODUCTION_MID: ${{ steps.config.outputs.production_mid }}
-          DE_COUNT: ${{ steps.discover.outputs.count }}
-        run: |
-          {
-            echo ""
-            echo "## Overall Status"
-            echo ""
-            echo "✅ Deployment and Production verification completed successfully."
-            echo ""
-            echo "- LOB: \`$LOB\`"
-            echo "- POC production target BU MID: \`$PRODUCTION_MID\`"
-            echo "- Approved Data Extensions processed: \`$DE_COUNT\`"
-            echo "- Source of truth: \`main\`"
-            echo "- Data rows deployed: \`No\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: No Data Extension changes
-        if: success() && steps.select.outputs.has_assets == 'false'
-        shell: bash
-        run: |
-          echo "No approved Data Extension metadata changed. No SFMC authentication or deployment was performed." >> "$GITHUB_STEP_SUMMARY"
-  notify-on-failure:
-    name: Notify deployment failure
-    needs: [deploy-data-extensions]
-    if: ${{ always() && (needs.deploy-data-extensions.result == 'failure' || (github.event_name == 'workflow_dispatch' && inputs.notification_test)) }}
+jobs:
+  deploy-data-extensions:
+    name: Deploy Data Extensions
+    if: ${{ !inputs.notification_test }}
     runs-on: ubuntu-latest
+
     steps:
-      - name: Send Slack failure or test notification
+      - name: Checkout approved main branch
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate configuration
+        id: config
         shell: bash
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SFMC_DEPLOYMENT_SLACK_WEBHOOK_URL }}
-          DEPLOY_RESULT: ${{ needs.deploy-data-extensions.result }}
-          NOTIFICATION_TEST: ${{ inputs.notification_test }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          SHA: ${{ github.sha }}
-          ACTOR: ${{ github.actor }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
-            echo "::error::Missing secret SFMC_DEPLOYMENT_SLACK_WEBHOOK_URL; cannot send required notification."
+
+          CONFIG_FILE="config/lob-config.json"
+
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "::error::Missing configuration file: $CONFIG_FILE"
             exit 1
           fi
-          case "$SLACK_WEBHOOK_URL" in
-            https://*) ;;
-            *) echo "::error::Slack webhook must use HTTPS."; exit 1 ;;
-          esac
-          echo "::add-mask::$SLACK_WEBHOOK_URL"
-          if [ "$NOTIFICATION_TEST" = "true" ]; then
-            EVENT_LABEL="TEST ONLY: SFMC deployment failure notification (no deployment attempted)"
-          else
-            EVENT_LABEL="SFMC Production deployment FAILED"
-          fi
-          RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}"
-          PAYLOAD="$(jq -n \
-            --arg label "$EVENT_LABEL" \
-            --arg repo "$REPO" \
-            --arg sha "$SHA" \
-            --arg actor "$ACTOR" \
-            --arg event "$EVENT_NAME" \
-            --arg run "$RUN_URL" \
-            '{text: ($label + "\nRepository: " + $repo + "\nEvent: " + $event + "\nCommit: " + $sha + "\nActor: " + $actor + "\nLogs and deployment summary: " + $run)}')"
-          HTTP_STATUS="$(curl --silent --show-error --output /tmp/slack-response.txt \
-            --write-out '%{http_code}' --retry 2 --retry-delay 2 \
-            --request POST --header 'Content-Type: application/json' \
-            --data "$PAYLOAD" "$SLACK_WEBHOOK_URL")"
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "::error::Slack notification failed (HTTP $HTTP_STATUS)."
+
+          jq -e . "$CONFIG_FILE" > /dev/null
+
+          SCHEMA_VERSION=$(jq -r '.schemaVersion // empty' "$CONFIG_FILE")
+          LOB=$(jq -r '.lineOfBusiness // empty' "$CONFIG_FILE")
+          ASSET_ROOT=$(jq -r '.assetRoot // empty' "$CONFIG_FILE")
+          PRODUCTION_MID=$(jq -r '.environments.production.businessUnitMid // empty' "$CONFIG_FILE")
+
+          DE_ENABLED=$(jq -r '.assetTypes.dataExtensions.enabled // false' "$CONFIG_FILE")
+          DE_DIRECTORY=$(jq -r '.assetTypes.dataExtensions.directory // empty' "$CONFIG_FILE")
+
+          if [ -z "$SCHEMA_VERSION" ]; then
+            echo "::error::schemaVersion is missing."
             exit 1
           fi
-          echo "Slack notification sent successfully."
-          if [ "$NOTIFICATION_TEST" = "true" ]; then
-            echo "### Slack notification TEST (no SFMC deployment)" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "### Slack failure notification delivered" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "$LOB" ]; then
+            echo "::error::lineOfBusiness is missing."
+            exit 1
           fi
-          echo "[View run logs]($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "$ASSET_ROOT" ]; then
+            echo "::error::assetRoot is missing."
+            exit 1
+          fi
+
+          if [ -z "$PRODUCTION_MID" ]; then
+            echo "::error::Production businessUnitMid is missing."
+            exit 1
+          fi
+
+          if ! [[ "$PRODUCTION_MID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Production businessUnitMid must be numeric."
+            exit 1
+          fi
+
+          if [ "$DE_ENABLED" != "true" ]; then
