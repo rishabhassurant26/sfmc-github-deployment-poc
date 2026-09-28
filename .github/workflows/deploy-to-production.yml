@@ -718,6 +718,37 @@ jobs:
                   ],
               }
 
+          def comparable_definition(definition):
+              # Ordinal is retained for CREATE/add-field payloads, but excluded
+              # from existing-DE reconciliation because SFMC can retain its own
+              # ordinal sequence after delete + add operations.
+              comparable = {
+                  "name": definition["name"],
+                  "customerKey": definition["customerKey"],
+                  "description": definition.get("description") or "",
+                  "isSendable": bool(definition.get("isSendable", False)),
+                  "isTestable": bool(definition.get("isTestable", False)),
+                  "fields": [],
+              }
+
+              for field in definition["fields"]:
+                  comparable["fields"].append({
+                      key: field.get(key)
+                      for key in (
+                          "name",
+                          "fieldType",
+                          "maxLength",
+                          "isPrimaryKey",
+                          "isRequired",
+                          "defaultValue",
+                          "precision",
+                          "scale",
+                      )
+                  })
+
+              comparable["fields"].sort(key=lambda field: field["name"])
+              return comparable
+
           def field_xml(field, include_object_id=False):
               parts = ["<Fields>"]
 
@@ -1094,11 +1125,11 @@ jobs:
               final_fields = retrieve_fields(customer_key)
               final_actual = normalized_actual(final_de, final_fields)
 
-              if final_actual != desired:
+              if comparable_definition(final_actual) != comparable_definition(desired):
                   raise RuntimeError(
                       f"{customer_key}: Production definition still differs from GitHub main after safe update. "
-                      + "Expected=" + json.dumps(desired, sort_keys=True)
-                      + "; Actual=" + json.dumps(final_actual, sort_keys=True)
+                      + "Expected=" + json.dumps(comparable_definition(desired), sort_keys=True)
+                      + "; Actual=" + json.dumps(comparable_definition(final_actual), sort_keys=True)
                   )
 
               print(f"Production Data Extension reconciled successfully: {customer_key}")
@@ -1132,7 +1163,7 @@ jobs:
                       production_fields = retrieve_fields(customer_key)
                       actual = normalized_actual(existing, production_fields)
 
-                      if actual == desired:
+                      if comparable_definition(actual) == comparable_definition(desired):
                           action = "SKIP"
                       else:
                           safe, reason = check_update_safety(
@@ -1171,11 +1202,11 @@ jobs:
                       verified_fields,
                   )
 
-                  if verified != desired:
+                  if comparable_definition(verified) != comparable_definition(desired):
                       raise RuntimeError(
                           "Post-deployment Production definition differs from GitHub main. "
-                          + "Expected=" + json.dumps(desired, sort_keys=True)
-                          + "; Actual=" + json.dumps(verified, sort_keys=True)
+                          + "Expected=" + json.dumps(comparable_definition(desired), sort_keys=True)
+                          + "; Actual=" + json.dumps(comparable_definition(verified), sort_keys=True)
                       )
 
                   verification = "PASS"
