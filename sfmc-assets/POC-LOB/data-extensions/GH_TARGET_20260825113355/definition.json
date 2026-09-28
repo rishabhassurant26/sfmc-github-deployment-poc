@@ -40,13 +40,13 @@
       "scale": null
     },
     {
-      "name": "Status",
+      "name": "Role",
       "fieldType": "Text",
       "maxLength": 50,
       "isPrimaryKey": false,
       "isRequired": false,
       "defaultValue": null,
-      "ordinal": 3,
+      "ordinal": 4,
       "precision": null,
       "scale": null
     }
