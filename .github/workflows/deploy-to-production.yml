@@ -947,8 +947,10 @@ jobs:
                   body = f"""
           <UpdateRequest xmlns="{API_NS}">
             <Options>
+              <Container>
+                <APIObject xsi:type="DataExtensionField" />
+              </Container>
               <Action>DELETE</Action>
-              <Container xsi:type="DataExtensionField" />
             </Options>
             <Objects xsi:type="DataExtension">
               <ObjectID>{esc(actual_de['objectId'])}</ObjectID>
