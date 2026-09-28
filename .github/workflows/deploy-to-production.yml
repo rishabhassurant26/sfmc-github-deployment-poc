@@ -658,29 +658,29 @@ jobs:
 
 
 
-          HTTP_CODE=$(curl \\
+          HTTP_CODE=$(curl \
 
-            --silent \\
+            --silent \
 
-            --show-error \\
+            --show-error \
 
-            --output /tmp/token-response.json \\
+            --output /tmp/token-response.json \
 
-            --write-out "%{http_code}" \\
+            --write-out "%{http_code}" \
 
-            --request POST \\
+            --request POST \
 
-            "${AUTH_BASE_URI}/v2/token" \\
+            "${AUTH_BASE_URI}/v2/token" \
 
-            --header "Content-Type: application/json" \\
+            --header "Content-Type: application/json" \
 
-            --data "$(jq -n \\
+            --data "$(jq -n \
 
-              --arg client_id "$SFMC_CLIENT_ID" \\
+              --arg client_id "$SFMC_CLIENT_ID" \
 
-              --arg client_secret "$SFMC_CLIENT_SECRET" \\
+              --arg client_secret "$SFMC_CLIENT_SECRET" \
 
-              --arg account_id "$PRODUCTION_MID" \\
+              --arg account_id "$PRODUCTION_MID" \
 
               '{
 
@@ -702,7 +702,7 @@ jobs:
 
             echo "::error::SFMC authentication failed with HTTP $HTTP_CODE."
 
-            jq -r '.message // .error_description // .error // "Unknown authentication error"' \\
+            jq -r '.message // .error_description // .error // "Unknown authentication error"' \
 
               /tmp/token-response.json
 
@@ -781,6 +781,8 @@ jobs:
           import sys
 
           import html
+
+          import time
 
           import urllib.request
 
@@ -1540,13 +1542,14 @@ jobs:
 
               removed = sorted(set(actual_by_name) - set(desired_by_name))
 
-              # Allow automatic removal of normal fields from Production when
-              # they no longer exist in the approved GitHub definition.
-              # Primary-key deletion remains blocked.
               for name in removed:
+
                   if bool(actual_by_name[name].get("isPrimaryKey")):
+
                       return False, (
+
                           f"Field {name}: automatic deletion of a primary-key field is blocked."
+
                       )
 
 
@@ -1810,7 +1813,13 @@ jobs:
           def delete_removed_fields(desired, actual_de, actual_fields):
               customer_key = desired["customerKey"]
               desired_names = {field["name"] for field in desired["fields"]}
-              removed = [field for field in actual_fields if field["name"] not in desired_names]
+              removed = [
+                  field for field in actual_fields
+                  if field["name"] not in desired_names
+              ]
+
+              if not removed:
+                  return
 
               for field in removed:
                   field_name = field["name"]
@@ -1821,8 +1830,7 @@ jobs:
                           f"{field_name} is blocked."
                       )
 
-                  # Re-read immediately before deletion so the destructive call
-                  # always targets the current Production field ObjectID.
+                  # Re-read Production immediately before deleting the child field.
                   live_fields = retrieve_fields(customer_key)
                   live_by_name = {item["name"]: item for item in live_fields}
                   live_field = live_by_name.get(field_name)
@@ -1833,37 +1841,34 @@ jobs:
 
                   if bool(live_field.get("isPrimaryKey")):
                       raise RuntimeError(
-                          f"{customer_key}: live Production field {field_name} is a "
-                          "primary key; automatic deletion is blocked."
+                          f"{customer_key}: automatic deletion of primary-key field "
+                          f"{field_name} is blocked."
                       )
 
-                  live_object_id = live_field.get("objectId")
-                  if not live_object_id:
+                  field_object_id = live_field.get("objectId")
+                  if not field_object_id:
                       raise RuntimeError(
-                          f"{customer_key}: live Production field {field_name} has "
-                          "no ObjectID; deletion aborted."
+                          f"{customer_key}: cannot delete field {field_name}; ObjectID is missing."
                       )
 
-                  # SFMC UpdateOptions supports deleting child DE fields when
-                  # Action=DELETE and Container contains a DataExtensionField.
-                  # The exact child to remove is supplied under the parent DE Fields.
                   body = f"""
           <UpdateRequest xmlns="{API_NS}">
-            <Options>
-              <Action>DELETE</Action>
-              <Container>
-                <APIObject xsi:type="DataExtensionField" />
-              </Container>
-            </Options>
-            <Objects xsi:type="DataExtension">
-              <ObjectID>{esc(actual_de['objectId'])}</ObjectID>
-              <CustomerKey>{esc(customer_key)}</CustomerKey>
-              <Fields>
-                <Field>
-                  <ObjectID>{esc(live_object_id)}</ObjectID>
-                </Field>
-              </Fields>
-            </Objects>
+              <Options>
+                  <Action>DELETE</Action>
+                  <Container>
+                      <APIObject xsi:type="DataExtensionField" />
+                  </Container>
+              </Options>
+              <Objects xsi:type="DataExtension">
+                  <ObjectID>{esc(actual_de['objectId'])}</ObjectID>
+                  <CustomerKey>{esc(customer_key)}</CustomerKey>
+                  <Fields>
+                      <Field>
+                          <ObjectID>{esc(field_object_id)}</ObjectID>
+                          <Name>{esc(field_name)}</Name>
+                      </Field>
+                  </Fields>
+              </Objects>
           </UpdateRequest>
           """
 
@@ -1872,23 +1877,28 @@ jobs:
                       customer_key,
                       f"delete field {field_name}",
                   )
+                  print(f"Salesforce accepted deletion request for: {field_name}")
 
-                  confirmed = retrieve_fields(customer_key)
-                  if field_name in {item["name"] for item in confirmed}:
-                      raise RuntimeError(
-                          f"{customer_key}: Salesforce accepted deletion of "
-                          f"{field_name}, but subsequent retrieve still found the field."
-                      )
-
-                  print(f"Confirmed Production field deletion: {field_name}")
+                  # UpdateOptions field removal can take a short time to become visible on retrieve.
+                  for attempt in range(1, 19):
+                      confirmed = retrieve_fields(customer_key)
+                      if field_name not in {item["name"] for item in confirmed}:
+                          print(f"Confirmed Production field deletion: {field_name}")
+                          break
+                      if attempt == 18:
+                          raise RuntimeError(
+                              f"{customer_key}: Salesforce accepted deletion of {field_name}, "
+                              "but Production still contains the field after verification."
+                          )
+                      time.sleep(10)
 
 
           def update_de(desired, actual_de, actual_fields):
 
               customer_key = desired["customerKey"]
 
-              # Reconcile removed fields first, then continue the proven update logic.
               delete_removed_fields(desired, actual_de, actual_fields)
+
               actual_fields = retrieve_fields(customer_key)
 
               actual_by_name = {f["name"]: f for f in actual_fields}
@@ -2277,7 +2287,7 @@ jobs:
 
                   f"**POC production target BU MID:** "
 
-                  f"`{os.environ['PRODUCTION_MID']}`\n\n"
+                  f"\`{os.environ['PRODUCTION_MID']}\`\n\n"
 
               )
 
@@ -2293,7 +2303,7 @@ jobs:
 
                   summary.write(
 
-                      f"| `{result['customerKey']}` "
+                      f"| \`{result['customerKey']}\` "
 
                       f"| **{result['action']}** "
 
@@ -2357,15 +2367,15 @@ jobs:
 
             echo ""
 
-            echo "- LOB: \\`$LOB\\`"
+            echo "- LOB: \\\`$LOB\\\`"
 
-            echo "- POC production target BU MID: \\`$PRODUCTION_MID\\`"
+            echo "- POC production target BU MID: \\\`$PRODUCTION_MID\\\`"
 
-            echo "- Approved Data Extensions processed: \\`$DE_COUNT\\`"
+            echo "- Approved Data Extensions processed: \\\`$DE_COUNT\\\`"
 
-            echo "- Source of truth: \\`main\\`"
+            echo "- Source of truth: \\\`main\\\`"
 
-            echo "- Data rows deployed: \\`No\\`"
+            echo "- Data rows deployed: \\\`No\\\`"
 
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -2449,27 +2459,27 @@ jobs:
 
           RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}"
 
-          PAYLOAD="$(jq -n \\
+          PAYLOAD="$(jq -n \
 
-            --arg label "$EVENT_LABEL" \\
+            --arg label "$EVENT_LABEL" \
 
-            --arg repo "$REPO" \\
+            --arg repo "$REPO" \
 
-            --arg sha "$SHA" \\
+            --arg sha "$SHA" \
 
-            --arg actor "$ACTOR" \\
+            --arg actor "$ACTOR" \
 
-            --arg event "$EVENT_NAME" \\
+            --arg event "$EVENT_NAME" \
 
-            --arg run "$RUN_URL" \\
+            --arg run "$RUN_URL" \
 
             '{text: ($label + "\nRepository: " + $repo + "\nEvent: " + $event + "\nCommit: " + $sha + "\nActor: " + $actor + "\nLogs and deployment summary: " + $run)}')"
 
-          HTTP_STATUS="$(curl --silent --show-error --output /tmp/slack-response.txt \\
+          HTTP_STATUS="$(curl --silent --show-error --output /tmp/slack-response.txt \
 
-            --write-out '%{http_code}' --retry 2 --retry-delay 2 \\
+            --write-out '%{http_code}' --retry 2 --retry-delay 2 \
 
-            --request POST --header 'Content-Type: application/json' \\
+            --request POST --header 'Content-Type: application/json' \
 
             --data "$PAYLOAD" "$SLACK_WEBHOOK_URL")"
 
@@ -2493,4 +2503,4 @@ jobs:
 
           fi
 
-          echo "[View run logs]($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
+          echo "[View run logs]\($RUN_URL)" >> "$GITHUB_STEP_SUMMARY"
