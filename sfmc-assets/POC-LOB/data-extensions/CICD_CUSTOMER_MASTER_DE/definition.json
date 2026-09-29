@@ -1,15 +1,15 @@
 {
   "assetType": "DataExtension",
-  "name": "PKG_GITHUB_TARGET_DE",
-  "customerKey": "PKG_GITHUB_TARGET_DE",
-  "description": " | Deployed from Package Manager JSON via GitHub",
+  "name": "CICD_CUSTOMER_MASTER_DE",
+  "customerKey": "CICD_CUSTOMER_MASTER_DE",
+  "description": "Customer master data extension deployed through CI/CD",
   "isSendable": false,
   "isTestable": false,
   "fields": [
     {
       "name": "CustomerID",
       "fieldType": "Text",
-      "maxLength": 51,
+      "maxLength": 50,
       "isPrimaryKey": true,
       "isRequired": true,
       "defaultValue": null,
@@ -40,13 +40,13 @@
       "scale": null
     },
     {
-      "name": "Phone",
-      "fieldType": "Phone",
+      "name": "Status",
+      "fieldType": "Text",
       "maxLength": 50,
       "isPrimaryKey": false,
       "isRequired": false,
       "defaultValue": null,
-      "ordinal": 4,
+      "ordinal": 3,
       "precision": null,
       "scale": null
     }
