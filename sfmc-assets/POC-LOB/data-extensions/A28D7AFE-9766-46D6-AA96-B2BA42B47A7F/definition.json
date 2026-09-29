@@ -1,0 +1,197 @@
+{
+  "assetType": "DataExtension",
+  "name": "CarMax Claim Notification",
+  "customerKey": "A28D7AFE-9766-46D6-AA96-B2BA42B47A7F",
+  "description": "",
+  "isSendable": true,
+  "isTestable": true,
+  "fields": [
+    {
+      "name": "CustomerFirstName",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 0,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "customerEmail",
+      "fieldType": "EmailAddress",
+      "maxLength": 254,
+      "isPrimaryKey": true,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 9,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "VehicleYear",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 11,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "VehicleMake",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 12,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "VehicleModel",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 13,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "ClaimNumber",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 14,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "BreakdownMileage",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 15,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "RepairFacilityAddress",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 16,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "LineOfBusiness",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 17,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "SubscriberKey",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 18,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "BreakdownDate",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 19,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "ContractCoveragePlan",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 20,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "contractId",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 21,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "contractNumber",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 22,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "caseNumber",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 23,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "vin",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 24,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "RepairFacilityName",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 27,
+      "precision": null,
+      "scale": null
+    }
+  ]
+}
