@@ -9,7 +9,7 @@
     {
       "name": "CustomerID",
       "fieldType": "Text",
-      "maxLength": 50,
+      "maxLength": 51,
       "isPrimaryKey": true,
       "isRequired": true,
       "defaultValue": null,
