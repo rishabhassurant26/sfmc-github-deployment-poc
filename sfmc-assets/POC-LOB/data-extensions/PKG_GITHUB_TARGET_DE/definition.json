@@ -40,13 +40,13 @@
       "scale": null
     },
     {
-      "name": "Status",
-      "fieldType": "Text",
+      "name": "Phone",
+      "fieldType": "Phone",
       "maxLength": 50,
       "isPrimaryKey": false,
-      "isRequired": false,
+      "isRequired": true,
       "defaultValue": null,
-      "ordinal": 3,
+      "ordinal": 4,
       "precision": null,
       "scale": null
     }
