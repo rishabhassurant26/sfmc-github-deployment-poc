@@ -44,7 +44,7 @@
       "fieldType": "Phone",
       "maxLength": 50,
       "isPrimaryKey": false,
-      "isRequired": true,
+      "isRequired": false,
       "defaultValue": null,
       "ordinal": 4,
       "precision": null,
