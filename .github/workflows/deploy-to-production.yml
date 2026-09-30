@@ -131,6 +131,7 @@ jobs:
           EVENT_AFTER: ${{ github.sha }}
           DEPLOYMENT_MODE: ${{ inputs.deployment_mode }}
           CUSTOMER_KEY: ${{ inputs.customer_key }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python3 <<'PYSELECT'
@@ -151,7 +152,16 @@ jobs:
 
           # Never deploy a stale push over a newer main revision.
           if event == "push":
-              remote_main = git("ls-remote", "https://github.com/" + os.environ["GITHUB_REPOSITORY"] + ".git", "refs/heads/main").split()[0]
+              remote_url = "https://github.com/" + os.environ["GITHUB_REPOSITORY"] + ".git"
+              token = os.environ["GITHUB_TOKEN"]
+              auth = __import__("base64").b64encode(("x-access-token:" + token).encode()).decode()
+              remote_main = git(
+                  "-c",
+                  "http.https://github.com/.extraheader=AUTHORIZATION: basic " + auth,
+                  "ls-remote",
+                  remote_url,
+                  "refs/heads/main",
+              ).split()[0]
               if remote_main != os.environ["EVENT_AFTER"]:
                   sys.exit("This push is no longer the latest main revision. Stop; use manual reconciliation after latest main is reviewed.")
               before = os.environ["EVENT_BEFORE"]
