@@ -3,8 +3,8 @@
   "name": "CICD_CUSTOMER_MASTER_DE_Test",
   "customerKey": "3CFF232B-9006-42A0-A099-294A91FAF085",
   "description": "Selective GitHub CI CD Deployment Test2x",
-  "isSendable": true,
-  "isTestable": true,
+  "isSendable": false,
+  "isTestable": false,
   "fields": [
     {
       "name": "CustomerID",
@@ -49,6 +49,17 @@
       "ordinal": 3,
       "precision": null,
       "scale": 0
+    },
+    {
+      "name": "Role",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 4,
+      "precision": null,
+      "scale": null
     }
   ]
 }
