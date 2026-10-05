@@ -1231,7 +1231,9 @@ jobs:
               echo "::error::Sendable definition is missing sendableSubscriberField.name."
               exit 1
             }
-            jq -e --arg field "$SENDABLE_DE_FIELD" \n              'any(.fields[]; (.name | ascii_downcase) == ($field | ascii_downcase))' \n              "$TARGET_FILE" >/dev/null || {
+            jq -e --arg field "$SENDABLE_DE_FIELD" \
+              'any(.fields[]; (.name | ascii_downcase) == ($field | ascii_downcase))' \
+              "$TARGET_FILE" >/dev/null || {
               echo "::error::SendableDataExtensionField is not present in generated fields."
               exit 1
             }
