@@ -1,0 +1,137 @@
+{
+  "assetType": "DataExtension",
+  "name": "DE_MotorClaims_Clean",
+  "customerKey": "FA94CAC0-D6F8-49F0-BB3D-30BA92C91114",
+  "description": "",
+  "isSendable": true,
+  "isTestable": false,
+  "fields": [
+    {
+      "name": "POLICYNO",
+      "fieldType": "Text",
+      "maxLength": 150,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 0,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "RISKTYPE",
+      "fieldType": "Text",
+      "maxLength": 150,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 1,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "MAKE",
+      "fieldType": "Text",
+      "maxLength": 150,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 2,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "MODEL",
+      "fieldType": "Text",
+      "maxLength": 250,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 3,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "YEAR",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 4,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "FNAME",
+      "fieldType": "Text",
+      "maxLength": 150,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 5,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "LNAME",
+      "fieldType": "Text",
+      "maxLength": 150,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 6,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "EMAIL",
+      "fieldType": "EmailAddress",
+      "maxLength": 254,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 7,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "CLAIMNO",
+      "fieldType": "Text",
+      "maxLength": 250,
+      "isPrimaryKey": true,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 8,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "SETTLED",
+      "fieldType": "Text",
+      "maxLength": 250,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 9,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "CLAIM",
+      "fieldType": "Text",
+      "maxLength": 150,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 10,
+      "precision": null,
+      "scale": 0
+    }
+  ],
+  "sendableDataExtensionField": {
+    "name": "EMAIL"
+  },
+  "sendableSubscriberField": {
+    "name": "_SubscriberKey"
+  }
+}
