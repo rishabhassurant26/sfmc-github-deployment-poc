@@ -226,5 +226,11 @@
       "precision": null,
       "scale": null
     }
-  ]
+  ],
+  "sendableDataExtensionField": {
+    "name": "EmailAddress"
+  },
+  "sendableSubscriberField": {
+    "name": "_SubscriberKey"
+  }
 }
