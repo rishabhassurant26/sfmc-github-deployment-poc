@@ -310,8 +310,23 @@ jobs:
             IS_SENDABLE=$(jq -r '.isSendable // false' "$FILE")
 
             if [ "$IS_SENDABLE" = "true" ]; then
-              echo "::error file=$FILE::Sendable Data Extension deployment requires sendable field mapping metadata. Current definition does not contain that mapping."
-              exit 1
+              SENDABLE_DE_FIELD=$(jq -r '.sendableDataExtensionField.name // empty' "$FILE")
+              SENDABLE_SUBSCRIBER_FIELD=$(jq -r '.sendableSubscriberField.name // empty' "$FILE")
+
+              if [ -z "$SENDABLE_DE_FIELD" ]; then
+                echo "::error file=$FILE::Sendable DE requires sendableDataExtensionField.name."
+                exit 1
+              fi
+
+              if [ -z "$SENDABLE_SUBSCRIBER_FIELD" ]; then
+                echo "::error file=$FILE::Sendable DE requires sendableSubscriberField.name."
+                exit 1
+              fi
+
+              if ! jq -e --arg field "$SENDABLE_DE_FIELD"                 'any(.fields[]; (.name | ascii_downcase) == ($field | ascii_downcase))'                 "$FILE" >/dev/null; then
+                echo "::error file=$FILE::sendableDataExtensionField.name does not match a DE field: $SENDABLE_DE_FIELD"
+                exit 1
+              fi
             fi
 
             echo "$FILE" >> /tmp/de-definitions.txt
@@ -478,6 +493,14 @@ jobs:
                       return child.text
               return None
 
+          def nested_name(parent, container_local_name):
+              if parent is None:
+                  return None
+              for node in parent.iter():
+                  if node.tag.split("}")[-1] == container_local_name:
+                      return text_of(node, "Name")
+              return None
+
           def retrieve_de(customer_key):
               body = f"""
           <RetrieveRequestMsg xmlns="{API_NS}">
@@ -489,6 +512,8 @@ jobs:
               <Properties>Description</Properties>
               <Properties>IsSendable</Properties>
               <Properties>IsTestable</Properties>
+              <Properties>SendableDataExtensionField.Name</Properties>
+              <Properties>SendableSubscriberField.Name</Properties>
               <Filter xsi:type="SimpleFilterPart">
                 <Property>CustomerKey</Property>
                 <SimpleOperator>equals</SimpleOperator>
@@ -534,6 +559,16 @@ jobs:
                   "description": text_of(result, "Description") or "",
                   "isSendable": (text_of(result, "IsSendable") or "").lower() == "true",
                   "isTestable": (text_of(result, "IsTestable") or "").lower() == "true",
+                  "sendableDataExtensionField": (
+                      {"name": nested_name(result, "SendableDataExtensionField")}
+                      if nested_name(result, "SendableDataExtensionField")
+                      else None
+                  ),
+                  "sendableSubscriberField": (
+                      {"name": nested_name(result, "SendableSubscriberField")}
+                      if nested_name(result, "SendableSubscriberField")
+                      else None
+                  ),
               }
 
           def describe_de_fields():
@@ -693,14 +728,39 @@ jobs:
                   )
               )
 
-              return {
+              normalized = {
                   "name": definition["name"],
                   "customerKey": definition["customerKey"],
                   "description": definition.get("description") or "",
                   "isSendable": bool(definition.get("isSendable", False)),
                   "isTestable": bool(definition.get("isTestable", False)),
+                  "sendableDataExtensionField": definition.get("sendableDataExtensionField"),
+                  "sendableSubscriberField": definition.get("sendableSubscriberField"),
                   "fields": fields,
               }
+
+              if normalized["isSendable"]:
+                  de_field_name = (
+                      (normalized.get("sendableDataExtensionField") or {}).get("name")
+                  )
+                  subscriber_field_name = (
+                      (normalized.get("sendableSubscriberField") or {}).get("name")
+                  )
+
+                  if not de_field_name or not subscriber_field_name:
+                      raise RuntimeError(
+                          f"{normalized['customerKey']}: sendable relationship metadata is incomplete."
+                      )
+
+                  if de_field_name.lower() not in {
+                      field["name"].lower() for field in normalized["fields"]
+                  }:
+                      raise RuntimeError(
+                          f"{normalized['customerKey']}: sendableDataExtensionField "
+                          f"{de_field_name!r} is not present in the DE fields."
+                      )
+
+              return normalized
 
           def normalized_actual(de, fields):
               return {
@@ -709,6 +769,8 @@ jobs:
                   "description": de.get("description") or "",
                   "isSendable": bool(de.get("isSendable", False)),
                   "isTestable": bool(de.get("isTestable", False)),
+                  "sendableDataExtensionField": de.get("sendableDataExtensionField"),
+                  "sendableSubscriberField": de.get("sendableSubscriberField"),
                   "fields": [
                       {
                           key: field.get(key)
@@ -740,6 +802,14 @@ jobs:
                   "isTestable": bool(definition.get("isTestable", False)),
                   "fields": [],
               }
+
+              if comparable["isSendable"]:
+                  comparable["sendableDataExtensionField"] = definition.get(
+                      "sendableDataExtensionField"
+                  )
+                  comparable["sendableSubscriberField"] = definition.get(
+                      "sendableSubscriberField"
+                  )
 
               for field in definition["fields"]:
                   comparable["fields"].append({
@@ -880,6 +950,31 @@ jobs:
 
               return True, ""
 
+          def sendable_relationship_xml(desired):
+              if not desired.get("isSendable", False):
+                  return ""
+
+              de_field_name = (
+                  (desired.get("sendableDataExtensionField") or {}).get("name")
+              )
+              subscriber_field_name = (
+                  (desired.get("sendableSubscriberField") or {}).get("name")
+              )
+
+              if not de_field_name or not subscriber_field_name:
+                  raise RuntimeError(
+                      f"{desired['customerKey']}: sendable relationship metadata is incomplete."
+                  )
+
+              return (
+                  "<SendableDataExtensionField>"
+                  f"<Name>{esc(de_field_name)}</Name>"
+                  "</SendableDataExtensionField>"
+                  "<SendableSubscriberField>"
+                  f"<Name>{esc(subscriber_field_name)}</Name>"
+                  "</SendableSubscriberField>"
+              )
+
           def create_de(desired):
               # CREATE requires one Fields collection containing Field children.
               # Keep field_xml unchanged because UPDATE already uses it.
@@ -889,6 +984,7 @@ jobs:
                       .replace("</Fields>", "</Field>", 1)
                   for field in desired["fields"]
               ) + "</Fields>"
+              relationship = sendable_relationship_xml(desired)
 
               body = f"""
           <CreateRequest xmlns="{API_NS}">
@@ -899,6 +995,7 @@ jobs:
               <Description>{esc(desired['description'])}</Description>
               <IsSendable>{bool_text(desired['isSendable'])}</IsSendable>
               <IsTestable>{bool_text(desired['isTestable'])}</IsTestable>
+              {relationship}
               {fields}
             </Objects>
           </CreateRequest>
@@ -1103,9 +1200,19 @@ jobs:
                   or (current_de.get("description") or "") != (desired.get("description") or "")
                   or bool(current_de.get("isSendable", False)) != bool(desired.get("isSendable", False))
                   or bool(current_de.get("isTestable", False)) != bool(desired.get("isTestable", False))
+                  or (
+                      bool(desired.get("isSendable", False))
+                      and (
+                          current_de.get("sendableDataExtensionField")
+                          != desired.get("sendableDataExtensionField")
+                          or current_de.get("sendableSubscriberField")
+                          != desired.get("sendableSubscriberField")
+                      )
+                  )
               )
 
               if parent_changed:
+                  relationship = sendable_relationship_xml(desired)
                   body = f"""
           <UpdateRequest xmlns="{API_NS}">
             <Options />
@@ -1116,6 +1223,7 @@ jobs:
               <Description>{esc(desired['description'])}</Description>
               <IsSendable>{bool_text(desired['isSendable'])}</IsSendable>
               <IsTestable>{bool_text(desired['isTestable'])}</IsTestable>
+              {relationship}
             </Objects>
           </UpdateRequest>
           """
@@ -1157,12 +1265,6 @@ jobs:
               detail = ""
 
               try:
-                  if desired["isSendable"]:
-                      raise RuntimeError(
-                          "Sendable DE deployment is blocked until sendable "
-                          "field relationship metadata is version-controlled."
-                      )
-
                   existing = retrieve_de(customer_key)
 
                   if existing is None:
