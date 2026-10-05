@@ -950,6 +950,18 @@ jobs:
 
               return True, ""
 
+          def soap_writable_subscriber_field_name(retrieved_name):
+              # SFMC Retrieve returns internal/system names such as _SubscriberKey.
+              # SOAP Create/Update expects the writable Attribute display name.
+              # Keep this translation at the platform boundary; DE-specific mappings
+              # remain fully dynamic and continue to come from definition.json.
+              platform_names = {
+                  "_SubscriberKey": "Subscriber Key",
+                  "_SubscriberID": "Subscriber ID",
+                  "_EmailAddress": "Email Address",
+              }
+              return platform_names.get(retrieved_name, retrieved_name)
+
           def sendable_relationship_xml(desired):
               if not desired.get("isSendable", False):
                   return ""
@@ -957,17 +969,22 @@ jobs:
               de_field_name = (
                   (desired.get("sendableDataExtensionField") or {}).get("name")
               )
-              subscriber_field_name = (
+              retrieved_subscriber_field_name = (
                   (desired.get("sendableSubscriberField") or {}).get("name")
               )
 
-              if not de_field_name or not subscriber_field_name:
+              if not de_field_name or not retrieved_subscriber_field_name:
                   raise RuntimeError(
                       f"{desired['customerKey']}: sendable relationship metadata is incomplete."
                   )
 
+              subscriber_field_name = soap_writable_subscriber_field_name(
+                  retrieved_subscriber_field_name
+              )
+
               return (
                   "<SendableDataExtensionField>"
+                  '<ObjectID xsi:nil="true" />'
                   f"<Name>{esc(de_field_name)}</Name>"
                   "</SendableDataExtensionField>"
                   "<SendableSubscriberField>"
