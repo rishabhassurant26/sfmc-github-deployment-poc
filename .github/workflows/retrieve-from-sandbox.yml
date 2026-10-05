@@ -102,6 +102,15 @@ jobs:
                   for flag in ('isPrimaryKey', 'isRequired'):
                       if not isinstance(field.get(flag), bool):
                           fail(f'{flag} must be boolean for {field["name"]}: {path}')
+              if bool(asset.get('isSendable', False)):
+                  de_field = asset.get('sendableDataExtensionField')
+                  sub_field = asset.get('sendableSubscriberField')
+                  if not isinstance(de_field, dict) or not isinstance(de_field.get('name'), str) or not de_field['name'].strip():
+                      fail(f'Sendable DE requires sendableDataExtensionField.name: {path}')
+                  if not isinstance(sub_field, dict) or not isinstance(sub_field.get('name'), str) or not sub_field['name'].strip():
+                      fail(f'Sendable DE requires sendableSubscriberField.name: {path}')
+                  if de_field['name'].lower() not in seen:
+                      fail(f'Sendable DE field {de_field["name"]} is not present in fields: {path}')
               print(f'PASS {asset["customerKey"]} ({len(fields)} fields)')
           print(f'Validated {len(definitions)} Sandbox DE definition(s).')
           PYVALIDATE
@@ -199,6 +208,11 @@ jobs:
               return result
           def value(node, name):
               return next((n.text for n in node if n.tag.split('}')[-1]==name), None)
+          def descendant_value(node, parent_name, child_name):
+              parent = next((n for n in node if n.tag.split('}')[-1] == parent_name), None)
+              if parent is None:
+                  return None
+              return next((n.text for n in parent.iter() if n.tag.split('}')[-1] == child_name), None)
           def results(root):
               return [n for n in root.iter() if n.tag.split('}')[-1]=='Results']
           def retrieve(obj, props, filter_property, key):
@@ -237,7 +251,7 @@ jobs:
                   key = desired['customerKey']
                   try:
                       found = retrieve('DataExtension', ['ObjectID','CustomerKey','Name','Description',
-                                      'IsSendable','IsTestable'], 'CustomerKey', key)
+                                      'IsSendable','IsTestable','SendableDataExtensionField.Name','SendableSubscriberField.Name'], 'CustomerKey', key)
                       found = [r for r in found if value(r,'CustomerKey')==key]
                       if len(found)!=1:
                           raise RuntimeError('Missing or ambiguous DE in Sandbox')
@@ -271,6 +285,15 @@ jobs:
                                 'isSendable':boolean(value(de,'IsSendable')),
                                 'isTestable':boolean(value(de,'IsTestable')),
                                 'fields':sort_fields(actual_fields)}
+                      if expected['isSendable']:
+                          expected['sendableDataExtensionField'] = desired.get('sendableDataExtensionField')
+                          expected['sendableSubscriberField'] = desired.get('sendableSubscriberField')
+                          actual['sendableDataExtensionField'] = {
+                              'name': descendant_value(de, 'SendableDataExtensionField', 'Name')
+                          }
+                          actual['sendableSubscriberField'] = {
+                              'name': descendant_value(de, 'SendableSubscriberField', 'Name')
+                          }
                       if actual != expected:
                           raise RuntimeError('Metadata differs from GitHub sandbox definition')
                       print(f'PASS: {key} matches Sandbox')
@@ -545,6 +568,8 @@ jobs:
                   <Properties>Description</Properties>
                   <Properties>IsSendable</Properties>
                   <Properties>IsTestable</Properties>
+                  <Properties>SendableDataExtensionField.Name</Properties>
+                  <Properties>SendableSubscriberField.Name</Properties>
                   <Properties>CategoryID</Properties>
                   <Filter xsi:type="SimpleFilterPart">
                     <Property>CustomerKey</Property>
@@ -644,6 +669,13 @@ jobs:
               node = result.find(f"et:{name}", ns)
               return node.text if node is not None and node.text is not None else None
 
+          def nested_value(parent_name, child_name):
+              parent = result.find(f"et:{parent_name}", ns)
+              if parent is None:
+                  return None
+              child = parent.find(f"et:{child_name}", ns)
+              return child.text if child is not None and child.text is not None else None
+
           returned_key = value("CustomerKey")
 
           if returned_key != requested_key:
@@ -661,6 +693,15 @@ jobs:
               "isSendable": (value("IsSendable") or "").lower() == "true",
               "isTestable": (value("IsTestable") or "").lower() == "true",
           }
+
+          if metadata["isSendable"]:
+              sendable_de_field = nested_value("SendableDataExtensionField", "Name")
+              sendable_subscriber_field = nested_value("SendableSubscriberField", "Name")
+              if not sendable_de_field or not sendable_subscriber_field:
+                  print("::error::Sendable Data Extension relationship metadata was not returned by SFMC.")
+                  sys.exit(1)
+              metadata["sendableDataExtensionField"] = {"name": sendable_de_field}
+              metadata["sendableSubscriberField"] = {"name": sendable_subscriber_field}
 
           if not metadata["objectId"] or not metadata["name"]:
               print("::error::Incomplete Data Extension metadata returned.")
@@ -1096,6 +1137,22 @@ jobs:
               "fields": fields,
           }
 
+          if definition["isSendable"]:
+              de_mapping = metadata.get("sendableDataExtensionField")
+              subscriber_mapping = metadata.get("sendableSubscriberField")
+              if not isinstance(de_mapping, dict) or not de_mapping.get("name"):
+                  print("::error::Missing sendableDataExtensionField metadata.")
+                  sys.exit(1)
+              if not isinstance(subscriber_mapping, dict) or not subscriber_mapping.get("name"):
+                  print("::error::Missing sendableSubscriberField metadata.")
+                  sys.exit(1)
+              field_names = {field.get("name", "").lower() for field in fields}
+              if de_mapping["name"].lower() not in field_names:
+                  print("::error::SendableDataExtensionField is not present in the retrieved DE schema.")
+                  sys.exit(1)
+              definition["sendableDataExtensionField"] = de_mapping
+              definition["sendableSubscriberField"] = subscriber_mapping
+
           target_file = os.path.join(
               os.environ["ASSET_ROOT"],
               os.environ["LOB"],
@@ -1161,6 +1218,24 @@ jobs:
             echo "::error::Generated definition contains no fields."
             exit 1
           }
+
+          IS_SENDABLE="$(jq -r '.isSendable // false' "$TARGET_FILE")"
+          if [ "$IS_SENDABLE" = "true" ]; then
+            SENDABLE_DE_FIELD="$(jq -r '.sendableDataExtensionField.name // empty' "$TARGET_FILE")"
+            SENDABLE_SUBSCRIBER_FIELD="$(jq -r '.sendableSubscriberField.name // empty' "$TARGET_FILE")"
+            [ -n "$SENDABLE_DE_FIELD" ] || {
+              echo "::error::Sendable definition is missing sendableDataExtensionField.name."
+              exit 1
+            }
+            [ -n "$SENDABLE_SUBSCRIBER_FIELD" ] || {
+              echo "::error::Sendable definition is missing sendableSubscriberField.name."
+              exit 1
+            }
+            jq -e --arg field "$SENDABLE_DE_FIELD" \n              'any(.fields[]; (.name | ascii_downcase) == ($field | ascii_downcase))' \n              "$TARGET_FILE" >/dev/null || {
+              echo "::error::SendableDataExtensionField is not present in generated fields."
+              exit 1
+            }
+          fi
 
           echo "Generated definition validation successful."
 
