@@ -51,13 +51,13 @@
       "scale": 0
     },
     {
-      "name": "Status",
+      "name": "City",
       "fieldType": "Text",
       "maxLength": 50,
       "isPrimaryKey": false,
-      "isRequired": false,
+      "isRequired": true,
       "defaultValue": null,
-      "ordinal": 4,
+      "ordinal": 5,
       "precision": null,
       "scale": null
     }
