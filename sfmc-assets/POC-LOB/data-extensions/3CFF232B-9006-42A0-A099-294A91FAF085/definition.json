@@ -3,8 +3,8 @@
   "name": "CICD_CUSTOMER_MASTER_DE_Test",
   "customerKey": "3CFF232B-9006-42A0-A099-294A91FAF085",
   "description": "Selective GitHub CI CD Deployment Test2x",
-  "isSendable": false,
-  "isTestable": false,
+  "isSendable": true,
+  "isTestable": true,
   "fields": [
     {
       "name": "CustomerID",
@@ -61,5 +61,11 @@
       "precision": null,
       "scale": null
     }
-  ]
+  ],
+  "sendableDataExtensionField": {
+    "name": "CustomerID"
+  },
+  "sendableSubscriberField": {
+    "name": "_SubscriberKey"
+  }
 }
