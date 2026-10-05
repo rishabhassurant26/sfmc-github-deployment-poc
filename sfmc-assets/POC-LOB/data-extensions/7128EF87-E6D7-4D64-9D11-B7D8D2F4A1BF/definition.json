@@ -18,17 +18,6 @@
       "scale": 0
     },
     {
-      "name": "SurveyDate",
-      "fieldType": "Date",
-      "maxLength": null,
-      "isPrimaryKey": false,
-      "isRequired": false,
-      "defaultValue": null,
-      "ordinal": 1,
-      "precision": null,
-      "scale": 0
-    },
-    {
       "name": "Q1_HadContact",
       "fieldType": "Text",
       "maxLength": 50,
@@ -225,6 +214,23 @@
       "ordinal": 19,
       "precision": null,
       "scale": 0
+    },
+    {
+      "name": "Phone",
+      "fieldType": "Phone",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 20,
+      "precision": null,
+      "scale": null
     }
-  ]
+  ],
+  "sendableDataExtensionField": {
+    "name": "EmailAddress"
+  },
+  "sendableSubscriberField": {
+    "name": "_SubscriberKey"
+  }
 }
