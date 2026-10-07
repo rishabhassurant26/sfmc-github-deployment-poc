@@ -332,10 +332,11 @@ jobs:
                   f"Expected exactly one Journey trigger; found {len(triggers)}."
               )
 
-          event_key = triggers[0].get("eventDefinitionKey")
+          trigger_metadata = triggers[0].get("metaData") or {}
+          event_key = trigger_metadata.get("eventDefinitionKey")
           if not event_key:
               raise RuntimeError(
-                  "Journey trigger does not contain eventDefinitionKey."
+                  "Journey trigger metaData does not contain eventDefinitionKey."
               )
 
           with open("/tmp/journey.json", "w", encoding="utf-8") as f:
@@ -749,7 +750,13 @@ jobs:
                   "Normalization blocked: expected one Journey trigger."
               )
 
-          event_key = triggers[0].get("eventDefinitionKey")
+          trigger_metadata = triggers[0].get("metaData") or {}
+          event_key = trigger_metadata.get("eventDefinitionKey")
+
+          if not event_key:
+              raise RuntimeError(
+                  "Normalization blocked: Journey trigger metaData does not contain eventDefinitionKey."
+              )
 
           if event.get("eventDefinitionKey") != event_key:
               raise RuntimeError(
