@@ -274,7 +274,29 @@ jobs:
                   body=e.read().decode(errors='replace')
                   if allow404 and e.code==404: return None
                   raise RuntimeError(f'{method} {path} HTTP {e.code}: {body}')
-          existing=request('GET','/interaction/v1/eventDefinitions/key:'+urllib.parse.quote(key,safe=''),allow404=True)
+          # Do not use GET /eventDefinitions/key:{key} as the existence check.
+          # In this tenant a missing key returns HTTP 400 rather than 404.
+          # Salesforce documents the collection endpoint with $page/$pageSize
+          # and an items array, so locate the exact key through that collection.
+          existing=None
+          page=1
+          while True:
+              path=(
+                  '/interaction/v1/eventDefinitions?'
+                  + urllib.parse.urlencode({'$page':page,'$pageSize':50})
+              )
+              collection=request('GET',path)
+              items=collection.get('items') or []
+              matches=[x for x in items if x.get('eventDefinitionKey') == key]
+              if len(matches) > 1:
+                  raise RuntimeError(f'Multiple Production Event Definitions found for key {key}')
+              if matches:
+                  existing=matches[0]
+                  break
+              if len(items) < 50:
+                  break
+              page += 1
+
           if existing:
               if existing.get('dataExtensionId') != deid:
                   raise RuntimeError(f'Production Event Definition exists but points to different DE: {existing.get("dataExtensionId")} != {deid}')
