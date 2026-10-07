@@ -1,0 +1,11 @@
+{
+  "status": "NOT_RESOLVED",
+  "soapStatus": "OK",
+  "requestedObjectId": "6d9e9be9-77a5-4ea5-931b-dad614ff9769",
+  "expectedAutomation": {
+    "name": "GitHub E2E Automation 32856624467_1",
+    "customerKey": "E2EA_32856624467_1"
+  },
+  "resultsReturned": 0,
+  "results": []
+}

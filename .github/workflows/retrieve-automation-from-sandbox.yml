@@ -1271,7 +1271,203 @@ jobs:
 
 
       # ============================================================
-      # 10. BUILD DEFINITION
+      # 10. DESCRIBE TASK OBJECT
+      #
+      # Program identity is already live-proven.
+      # Before retrieving Task, ask SFMC which Task properties
+      # are actually retrievable/filterable in this account.
+      #
+      # No Program -> Task relationship is guessed here.
+      # ============================================================
+      - name: Describe SFMC Task object
+        id: task_describe
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+        run: |
+          set -euo pipefail
+
+          export ACCESS_TOKEN
+          export SOAP_URL
+
+          python3 <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+
+          body = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:et="http://exacttarget.com/wsdl/partnerAPI">
+
+            <soapenv:Header>
+              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
+            </soapenv:Header>
+
+            <soapenv:Body>
+              <et:DefinitionRequestMsg>
+                <et:DescribeRequests>
+                  <et:ObjectDefinitionRequest>
+                    <et:ObjectType>Task</et:ObjectType>
+                  </et:ObjectDefinitionRequest>
+                </et:DescribeRequests>
+              </et:DefinitionRequestMsg>
+            </soapenv:Body>
+
+          </soapenv:Envelope>
+          """
+
+          request = urllib.request.Request(
+              soap_url + "/Service.asmx",
+              data=body.encode("utf-8"),
+              headers={
+                  "Content-Type": "text/xml; charset=UTF-8",
+                  "SOAPAction": "Describe"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(request) as response:
+                  xml_data = response.read()
+
+          except urllib.error.HTTPError as exc:
+              response_text = exc.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+              print(response_text)
+              raise SystemExit(
+                  f"Task Describe HTTP {exc.code}"
+              )
+
+          with open(
+              "task-describe-response.xml",
+              "wb"
+          ) as f:
+              f.write(xml_data)
+
+          root = ET.fromstring(xml_data)
+
+          overall = ""
+          request_id = ""
+          properties = []
+
+          for element in root.iter():
+
+              local = element.tag.split("}")[-1]
+
+              if local == "OverallStatus":
+                  overall = (
+                      element.text or ""
+                  ).strip()
+
+              elif local == "RequestID":
+                  request_id = (
+                      element.text or ""
+                  ).strip()
+
+              elif local == "Properties":
+
+                  prop = {}
+
+                  for child in list(element):
+                      key = child.tag.split("}")[-1]
+                      prop[key] = (
+                          child.text or ""
+                      ).strip()
+
+                  if prop.get("Name"):
+                      properties.append(prop)
+
+          retrievable = [
+              prop
+              for prop in properties
+              if prop.get(
+                  "IsRetrievable",
+                  ""
+              ).lower() == "true"
+          ]
+
+          print("")
+          print("============================================")
+          print("TASK OBJECT DESCRIBE")
+          print("============================================")
+          print("SOAP Status:", overall)
+          print("Properties returned:", len(properties))
+          print("Retrievable properties:", len(retrievable))
+          print("")
+
+          for prop in retrievable:
+              print(
+                  prop.get("Name", ""),
+                  "| Type:",
+                  prop.get("DataType", ""),
+                  "| Filterable:",
+                  prop.get("IsFilterable", "")
+              )
+
+          print("============================================")
+
+          result = {
+              "soapStatus": overall,
+              "requestId": request_id,
+              "objectType": "Task",
+              "propertyCount": len(properties),
+              "retrievablePropertyCount": len(retrievable),
+              "retrievableProperties": retrievable
+          }
+
+          with open(
+              "task-describe.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  result,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          if overall not in (
+              "OK",
+              "MoreDataAvailable"
+          ):
+              raise SystemExit(
+                  "Task Describe returned status: "
+                  + overall
+              )
+
+          if not retrievable:
+              raise SystemExit(
+                  "Task Describe returned no retrievable properties."
+              )
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a"
+          ) as f:
+              f.write("describe_status=SUCCESS\n")
+              f.write(
+                  "property_count="
+                  + str(len(retrievable))
+                  + "\n"
+              )
+
+          print("")
+          print("RESULT: TASK SCHEMA DISCOVERED")
+          PY
+
+
+      # ============================================================
+      # 11. BUILD DEFINITION
       #
       # IMPORTANT:
       # Program discovery is recorded as discovery evidence only.
@@ -1290,6 +1486,9 @@ jobs:
           PROGRAM_STEP_OUTCOME: ${{ steps.program_discovery.outcome }}
           PROGRAM_DISCOVERY_STATUS: ${{ steps.program_discovery.outputs.discovery_status }}
           PROGRAM_OBJECT_ID: ${{ steps.program_discovery.outputs.program_object_id }}
+
+          TASK_DESCRIBE_STATUS: ${{ steps.task_describe.outputs.describe_status }}
+          TASK_PROPERTY_COUNT: ${{ steps.task_describe.outputs.property_count }}
           PROGRAM_COUNT: ${{ steps.program_discovery.outputs.program_count }}
 
         run: |
@@ -1594,7 +1793,7 @@ jobs:
 
 
       # ============================================================
-      # 11. SAVE RESULT
+      # 12. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -1638,6 +1837,16 @@ jobs:
               "$OUTPUT_DIR/program-retrieve-response.xml"
           fi
 
+          if [ -f task-describe.json ]; then
+            cp task-describe.json \
+              "$OUTPUT_DIR/task-describe.json"
+          fi
+
+          if [ -f task-describe-response.xml ]; then
+            cp task-describe-response.xml \
+              "$OUTPUT_DIR/task-describe-response.xml"
+          fi
+
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Saved to:"
@@ -1645,7 +1854,7 @@ jobs:
 
 
       # ============================================================
-      # 12. DISPLAY RESULT
+      # 13. DISPLAY RESULT
       # ============================================================
       - name: Display retrieved definition
         shell: bash
@@ -1683,9 +1892,20 @@ jobs:
               "$OUTPUT_DIR/program-discovery.json"
           fi
 
+          if [ -f "$OUTPUT_DIR/task-describe.json" ]; then
+
+            echo ""
+            echo "============================================"
+            echo "TASK OBJECT DESCRIBE"
+            echo "============================================"
+
+            jq . \
+              "$OUTPUT_DIR/task-describe.json"
+          fi
+
 
       # ============================================================
-      # 13. COMMIT
+      # 14. COMMIT
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -1719,7 +1939,7 @@ jobs:
 
 
       # ============================================================
-      # 14. FINAL RESULT
+      # 15. FINAL RESULT
       # ============================================================
       - name: Retrieval complete
         shell: bash
@@ -1790,6 +2010,14 @@ jobs:
           echo ""
           echo "Program ObjectID:"
           echo "${PROGRAM_OBJECT_ID:-[not returned]}"
+
+          echo ""
+          echo "Task Describe status:"
+          echo "${TASK_DESCRIBE_STATUS:-[not available]}"
+
+          echo ""
+          echo "Task retrievable properties:"
+          echo "${TASK_PROPERTY_COUNT:-0}"
 
           echo ""
           echo "IMPORTANT:"

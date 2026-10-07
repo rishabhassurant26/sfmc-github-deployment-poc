@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.2",
+  "schemaVersion": "1.3",
   "assetType": "automation",
   "environment": "sandbox",
   "businessUnitMid": "524002130",
@@ -17,16 +17,22 @@
   "identity": {
     "customerKeyResolved": true,
     "objectIdReturned": false,
-    "preservedCreateObjectId": "",
-    "preservedObjectIdIdentityProven": false
+    "preservedCreateObjectId": "6d9e9be9-77a5-4ea5-931b-dad614ff9769",
+    "preservedObjectIdIdentityProven": false,
+    "preservedObjectIdProbeOutcome": "failure"
+  },
+  "programDiscovery": {
+    "stepOutcome": "success",
+    "status": "PROGRAM_RESOLVED",
+    "programResolved": true,
+    "programCount": 1,
+    "programObjectId": "6d9e9be9-77a5-4ea5-931b-dad614ff9769"
   },
   "discovery": {
-    "queryDefinitionsRetrieved": 21,
-    "automationTasksReturned": 0,
-    "automationTaskDiscoveryOutcome": "success"
+    "queryDefinitionsRetrieved": 21
   },
   "relationships": {
     "status": "UNRESOLVED",
-    "reason": "Automation and QueryDefinition metadata were retrieved successfully, but SFMC did not provide enough relationship evidence to associate a task/query with this Automation."
+    "reason": "SFMC returned a Program matching the retrieved Automation CustomerKey. Program identity is resolved, but no Program -> Task -> Activity -> Query relationship has yet been retrieved."
   }
 }
