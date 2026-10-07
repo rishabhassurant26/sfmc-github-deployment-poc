@@ -214,14 +214,16 @@ jobs:
                   if f.get('defaultValue') not in (None,''): parts.append(f'<DefaultValue>{esc(f["defaultValue"])}</DefaultValue>')
                   if f.get('ordinal') is not None: parts.append(f'<Ordinal>{int(f["ordinal"])}</Ordinal>')
                   if f.get('scale') is not None: parts.append(f'<Scale>{int(f["scale"])}</Scale>')
-                  field_xml.append('<Fields>'+''.join(parts)+'</Fields>')
+                  field_xml.append('<Field>'+''.join(parts)+'</Field>')
               send=''
               if de.get('isSendable'):
                   sf=de.get('sendableDataExtensionField') or ''
                   ss=de.get('sendableSubscriberField') or ''
                   platform={'_SubscriberKey':'Subscriber Key','_SubscriberID':'Subscriber ID','_EmailAddress':'Email Address'}.get(ss,ss)
-                  send=f'<IsSendable>true</IsSendable><SendableDataExtensionField><Name>{esc(sf)}</Name></SendableDataExtensionField><SendableSubscriberField><Name>{esc(platform)}</Name></SendableSubscriberField>'
-              body=f'''<CreateRequest xmlns="{API}"><Options/><Objects xsi:type="DataExtension"><CustomerKey>{esc(key)}</CustomerKey><Name>{esc(de['name'])}</Name><IsTestable>{str(bool(de.get('isTestable'))).lower()}</IsTestable>{send}{''.join(field_xml)}</Objects></CreateRequest>'''
+                  if not sf or not ss:
+                      raise RuntimeError(f'{key}: sendable relationship metadata is incomplete.')
+                  send=f'<IsSendable>true</IsSendable><SendableDataExtensionField><ObjectID xsi:nil=\"true\" /><Name>{esc(sf)}</Name></SendableDataExtensionField><SendableSubscriberField><Name>{esc(platform)}</Name></SendableSubscriberField>'
+              body=f'''<CreateRequest xmlns="{API}"><Options/><Objects xsi:type="DataExtension"><CustomerKey>{esc(key)}</CustomerKey><Name>{esc(de['name'])}</Name><IsTestable>{str(bool(de.get('isTestable'))).lower()}</IsTestable>{send}<Fields>{''.join(field_xml)}</Fields></Objects></CreateRequest>'''
               root=call('Create',body)
               status=next(((n.text or '').strip() for n in root.iter() if lname(n)=='StatusCode'),'')
               if status not in ('OK','Has Error'):
