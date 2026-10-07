@@ -438,28 +438,11 @@ jobs:
           )
 
           if existing_automation:
-              exact_automations = [
-                  item for item in existing_automation
-                  if child_text(item, "CustomerKey") == automation["customerKey"]
-              ]
-
-              if len(exact_automations) != 1:
-                  raise RuntimeError(
-                      f"Expected exactly one Production Automation for "
-                      f"{automation['customerKey']}; got {len(exact_automations)}."
-                  )
-
+              # Automation Retrieve is used only to detect existence.
+              # Do not re-filter its returned Results by CustomerKey because
+              # SFMC does not reliably populate that property on Automation
+              # retrieve responses. Resolve identity through Program instead.
               differences = []
-
-              production_automation_name = child_text(
-                  exact_automations[0], "Name"
-              )
-              if production_automation_name != automation["name"]:
-                  differences.append(
-                      "Automation name: "
-                      f"source={automation['name']!r}, "
-                      f"production={production_automation_name!r}"
-                  )
 
               programs = retrieve(
                   "Program",
@@ -476,6 +459,14 @@ jobs:
                   raise RuntimeError(
                       f"Expected exactly one Production Program for "
                       f"{automation['customerKey']}; got {len(programs)}."
+                  )
+
+              production_program_name = child_text(programs[0], "Name")
+              if production_program_name != automation["name"]:
+                  differences.append(
+                      "Automation/Program name: "
+                      f"source={automation['name']!r}, "
+                      f"production={production_program_name!r}"
                   )
 
               program_id = child_text(programs[0], "ObjectID")
