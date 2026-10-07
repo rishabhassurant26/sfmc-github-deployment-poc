@@ -1,0 +1,16 @@
+{
+  "status": "SCHEDULE_ID_RESOLVED",
+  "soapStatus": "OK",
+  "requestId": "52c41aa6-d62f-4596-b59e-468c264950a2",
+  "requestedProgramObjectId": "4e5b310e-0d22-490c-9a57-d0f297479852",
+  "programsReturned": 1,
+  "program": {
+    "ObjectID": "4e5b310e-0d22-490c-9a57-d0f297479852",
+    "CustomerKey": "4ac83f70-5116-9ecd-1aa5-2907523f1ecf",
+    "Name": "Consolidated BU Data",
+    "Schedule": {
+      "ID": "0"
+    }
+  },
+  "scheduleId": "0"
+}
