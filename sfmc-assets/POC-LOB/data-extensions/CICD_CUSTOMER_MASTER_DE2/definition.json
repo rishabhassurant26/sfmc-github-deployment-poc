@@ -40,7 +40,7 @@
       "scale": null
     },
     {
-      "name": "Phone",
+      "name": "Status",
       "fieldType": "Text",
       "maxLength": 50,
       "isPrimaryKey": false,
