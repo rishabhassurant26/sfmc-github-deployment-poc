@@ -1,7 +1,7 @@
 {
   "Automation": {
     "soapStatus": "",
-    "requestId": "5c387b93-17b5-49f9-b0fd-f7db4b842d8c",
+    "requestId": "ebf0cc9a-4dd5-40be-b35e-263abe5d316a",
     "objectType": "Automation",
     "propertyCount": 38,
     "retrievablePropertyCount": 13,
@@ -141,7 +141,7 @@
   },
   "Program": {
     "soapStatus": "",
-    "requestId": "7ea9fba8-4e85-4c7d-8952-62654bf60ccd",
+    "requestId": "380a6794-71ad-40e9-9741-a258b8efe9e6",
     "objectType": "Program",
     "propertyCount": 30,
     "retrievablePropertyCount": 13,

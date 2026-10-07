@@ -1,0 +1,622 @@
+name: Deploy SFMC Automation to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      automation_name:
+        description: "Exact approved Automation directory/name from main"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sfmc-production-automation-poc
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout reviewed main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate config and select definition
+        id: config
+        shell: bash
+        env:
+          INPUT_NAME: ${{ inputs.automation_name }}
+        run: |
+          set -euo pipefail
+
+          CONFIG="config/lob-config.json"
+          jq -e . "$CONFIG" >/dev/null
+
+          LOB=$(jq -r '.lineOfBusiness // empty' "$CONFIG")
+          ROOT=$(jq -r '.assetRoot // empty' "$CONFIG")
+          MID=$(jq -r '.environments.production.businessUnitMid // empty' "$CONFIG")
+          ENABLED=$(jq -r '.assetTypes.automations.enabled // false' "$CONFIG")
+          DIR=$(jq -r '.assetTypes.automations.directory // empty' "$CONFIG")
+
+          [ -n "$LOB" ] || { echo "::error::lineOfBusiness missing"; exit 1; }
+          [ -n "$ROOT" ] || { echo "::error::assetRoot missing"; exit 1; }
+          [[ "$MID" =~ ^[0-9]+$ ]] || { echo "::error::Production MID invalid"; exit 1; }
+          [ "$ENABLED" = "true" ] || { echo "::error::Automations disabled in config"; exit 1; }
+          [ -n "$DIR" ] || { echo "::error::Automation directory missing"; exit 1; }
+
+          NAME="${INPUT_NAME}"
+          if [ -z "$NAME" ] || [ "$NAME" = "." ] || [ "$NAME" = ".." ] || [[ "$NAME" == *"/"* ]] || [[ "$NAME" == *"\\"* ]]; then
+            echo "::error::Invalid Automation name"
+            exit 1
+          fi
+
+          FILE="${ROOT}/${LOB}/${DIR}/${NAME}/definition.json"
+          [ -f "$FILE" ] || { echo "::error::Definition not found: $FILE"; exit 1; }
+
+          echo "definition=$FILE" >> "$GITHUB_OUTPUT"
+          echo "production_mid=$MID" >> "$GITHUB_OUTPUT"
+
+      - name: Validate deployment policy and SQL structure
+        shell: bash
+        env:
+          FILE: ${{ steps.config.outputs.definition }}
+        run: |
+          set -euo pipefail
+
+          jq -e '
+            .schemaVersion == "2.0" and
+            .assetType == "automation" and
+            .deploymentPolicy.deployStructure == true and
+            .deploymentPolicy.deploySchedule == false and
+            .deploymentPolicy.activateAutomation == false and
+            .deploymentPolicy.runAutomation == false and
+            (.automation.name | type == "string" and length > 0) and
+            (.automation.customerKey | type == "string" and length > 0) and
+            (.tasks | type == "array" and length > 0)
+          ' "$FILE" >/dev/null || {
+            echo "::error::Definition/policy validation failed."
+            exit 1
+          }
+
+          python3 <<'PY'
+          import json, os
+          d=json.load(open(os.environ["FILE"],encoding="utf-8"))
+          for task in d["tasks"]:
+              acts=task.get("activities") or []
+              if not acts:
+                  raise SystemExit("Task contains no activities.")
+              for a in acts:
+                  q=a.get("definition") or {}
+                  if q.get("type") != "QueryDefinition":
+                      raise SystemExit("POC supports QueryDefinition activities only.")
+                  for k in ("name","customerKey","queryText","targetType","targetUpdateType"):
+                      if not str(q.get(k,"")).strip():
+                          raise SystemExit(f"QueryDefinition missing {k}.")
+                  target=q.get("targetDataExtension") or {}
+                  if not str(target.get("customerKey","")).strip():
+                      raise SystemExit("QueryDefinition target DE CustomerKey missing.")
+          print("Definition validated.")
+          print("Schedule deployment: blocked")
+          print("Activation: blocked")
+          print("Execution: blocked")
+          PY
+
+      - name: Validate SFMC secrets
+        shell: bash
+        env:
+          AUTH: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          CID: ${{ secrets.SFMC_CLIENT_ID }}
+          SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          [ -n "${AUTH:-}" ] || { echo "::error::SFMC_AUTH_BASE_URI missing"; exit 1; }
+          [ -n "${CID:-}" ] || { echo "::error::SFMC_CLIENT_ID missing"; exit 1; }
+          [ -n "${SECRET:-}" ] || { echo "::error::SFMC_CLIENT_SECRET missing"; exit 1; }
+
+      - name: Authenticate Production BU
+        shell: bash
+        env:
+          AUTH: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          CID: ${{ secrets.SFMC_CLIENT_ID }}
+          SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+          MID: ${{ steps.config.outputs.production_mid }}
+        run: |
+          set -euo pipefail
+
+          CODE=$(curl --silent --show-error \
+            --output /tmp/token.json \
+            --write-out "%{http_code}" \
+            --request POST "${AUTH%/}/v2/token" \
+            --header "Content-Type: application/json" \
+            --data "$(jq -n \
+              --arg id "$CID" \
+              --arg secret "$SECRET" \
+              --arg mid "$MID" \
+              '{grant_type:"client_credentials",
+                client_id:$id,
+                client_secret:$secret,
+                account_id:($mid|tonumber)}')")
+
+          if [ "$CODE" -lt 200 ] || [ "$CODE" -ge 300 ]; then
+            jq -r '.message // .error_description // .error // "Authentication failed"' /tmp/token.json
+            exit 1
+          fi
+
+          TOKEN=$(jq -r '.access_token // empty' /tmp/token.json)
+          SOAP=$(jq -r '.soap_instance_url // empty' /tmp/token.json)
+
+          [ -n "$TOKEN" ] || { echo "::error::access_token missing"; exit 1; }
+          [ -n "$SOAP" ] || { echo "::error::soap_instance_url missing"; exit 1; }
+
+          echo "::add-mask::$TOKEN"
+          printf '%s' "$TOKEN" > /tmp/sfmc-token
+          printf '%s' "${SOAP%/}" > /tmp/sfmc-soap
+
+          echo "Production authentication successful."
+          echo "Production MID: $MID"
+
+      - name: Deploy SQL Query Automation structure
+        shell: bash
+        env:
+          FILE: ${{ steps.config.outputs.definition }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import html
+          import os
+          import time
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          TOKEN = Path("/tmp/sfmc-token").read_text().strip()
+          SOAP_URL = Path("/tmp/sfmc-soap").read_text().strip() + "/Service.asmx"
+          definition = json.load(open(os.environ["FILE"], encoding="utf-8"))
+
+          API = "http://exacttarget.com/wsdl/partnerAPI"
+          SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
+          XSI = "http://www.w3.org/2001/XMLSchema-instance"
+
+          def esc(value):
+              return html.escape(str(value or ""), quote=True)
+
+          def lname(node):
+              return node.tag.split("}")[-1]
+
+          def child_text(node, name):
+              for child in list(node):
+                  if lname(child) == name:
+                      return (child.text or "").strip()
+              return ""
+
+          def overall(root):
+              for node in root.iter():
+                  if lname(node) == "OverallStatus":
+                      return (node.text or "").strip()
+              return ""
+
+          def result_nodes(root):
+              return [n for n in root.iter() if lname(n) == "Results"]
+
+          def soap_call(action, body):
+              envelope = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope xmlns:soapenv="{SOAP_NS}" xmlns:xsi="{XSI}">
+            <soapenv:Header>
+              <fueloauth xmlns="http://exacttarget.com">{esc(TOKEN)}</fueloauth>
+            </soapenv:Header>
+            <soapenv:Body>{body}</soapenv:Body>
+          </soapenv:Envelope>"""
+
+              req = urllib.request.Request(
+                  SOAP_URL,
+                  data=envelope.encode("utf-8"),
+                  method="POST",
+                  headers={
+                      "Content-Type": "text/xml; charset=UTF-8",
+                      "SOAPAction": f'"{action}"',
+                  },
+              )
+
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as response:
+                      payload = response.read()
+              except urllib.error.HTTPError as exc:
+                  payload = exc.read()
+                  raise RuntimeError(
+                      f"SOAP {action} HTTP {exc.code}: "
+                      f"{payload.decode('utf-8', errors='replace')}"
+                  ) from exc
+
+              root = ET.fromstring(payload)
+              fault = root.find(f".//{{{SOAP_NS}}}Fault")
+              if fault is not None:
+                  raise RuntimeError(
+                      f"SOAP {action} fault: {''.join(fault.itertext())}"
+                  )
+              return root
+
+          def retrieve(object_type, properties, filter_property, filter_value):
+              properties_xml = "".join(
+                  f"<Properties>{esc(p)}</Properties>" for p in properties
+              )
+              body = f"""
+          <RetrieveRequestMsg xmlns="{API}">
+            <RetrieveRequest>
+              <ObjectType>{esc(object_type)}</ObjectType>
+              {properties_xml}
+              <Filter xsi:type="SimpleFilterPart">
+                <Property>{esc(filter_property)}</Property>
+                <SimpleOperator>equals</SimpleOperator>
+                <Value>{esc(filter_value)}</Value>
+              </Filter>
+            </RetrieveRequest>
+          </RetrieveRequestMsg>
+          """
+              root = soap_call("Retrieve", body)
+              status = overall(root)
+              if status not in ("OK", "Has More Rows", "MoreDataAvailable"):
+                  raise RuntimeError(
+                      f"{object_type} retrieve failed. OverallStatus={status!r}"
+                  )
+              return result_nodes(root)
+
+          def create(object_type, inner_xml):
+              body = f"""
+          <CreateRequest xmlns="{API}">
+            <Options />
+            <Objects xsi:type="{object_type}">
+              {inner_xml}
+            </Objects>
+          </CreateRequest>
+          """
+              root = soap_call("Create", body)
+              status = overall(root)
+              messages = []
+              codes = []
+              for result in result_nodes(root):
+                  codes.append(child_text(result, "StatusCode"))
+                  messages.append(child_text(result, "StatusMessage"))
+
+              if status != "OK" or any(code and code != "OK" for code in codes):
+                  raise RuntimeError(
+                      f"{object_type} create failed: "
+                      f"OverallStatus={status}; codes={codes}; messages={messages}"
+                  )
+
+              object_id = ""
+              for node in root.iter():
+                  if lname(node) == "NewObjectID":
+                      value = (node.text or "").strip()
+                      if value:
+                          object_id = value
+                          break
+
+              if not object_id:
+                  raise RuntimeError(
+                      f"{object_type} create succeeded but NewObjectID was not returned."
+                  )
+              return object_id
+
+          def direct_result_by_key(results, key):
+              matches = [
+                  r for r in results
+                  if child_text(r, "CustomerKey") == key
+              ]
+              if len(matches) > 1:
+                  raise RuntimeError(
+                      f"Multiple results returned for CustomerKey {key}."
+                  )
+              return matches[0] if matches else None
+
+          def get_de(customer_key):
+              rs = retrieve(
+                  "DataExtension",
+                  ["ObjectID", "CustomerKey", "Name"],
+                  "CustomerKey",
+                  customer_key,
+              )
+              r = direct_result_by_key(rs, customer_key)
+              if r is None:
+                  return None
+              return {
+                  "objectId": child_text(r, "ObjectID"),
+                  "customerKey": child_text(r, "CustomerKey"),
+                  "name": child_text(r, "Name"),
+              }
+
+          def get_query(customer_key):
+              rs = retrieve(
+                  "QueryDefinition",
+                  [
+                      "ObjectID",
+                      "CustomerKey",
+                      "Name",
+                      "Description",
+                      "QueryText",
+                      "TargetType",
+                      "DataExtensionTarget.Name",
+                      "DataExtensionTarget.CustomerKey",
+                      "TargetUpdateType",
+                  ],
+                  "CustomerKey",
+                  customer_key,
+              )
+              r = direct_result_by_key(rs, customer_key)
+              if r is None:
+                  return None
+
+              target = {}
+              for c in list(r):
+                  if lname(c) == "DataExtensionTarget":
+                      target = {
+                          "name": child_text(c, "Name"),
+                          "customerKey": child_text(c, "CustomerKey"),
+                      }
+
+              return {
+                  "objectId": child_text(r, "ObjectID"),
+                  "customerKey": child_text(r, "CustomerKey"),
+                  "name": child_text(r, "Name"),
+                  "queryText": child_text(r, "QueryText"),
+                  "targetType": child_text(r, "TargetType"),
+                  "targetUpdateType": child_text(r, "TargetUpdateType"),
+                  "target": target,
+              }
+
+          def normalize_sql(value):
+              return " ".join((value or "").split())
+
+          automation = definition["automation"]
+          tasks = definition["tasks"]
+
+          # Fail closed. This first Production workflow creates structure only.
+          existing_automation = retrieve(
+              "Automation",
+              ["CustomerKey", "Name", "Status"],
+              "CustomerKey",
+              automation["customerKey"],
+          )
+          if existing_automation:
+              raise RuntimeError(
+                  f"Production Automation {automation['customerKey']} already exists. "
+                  "CREATE-only POC will not overwrite it."
+              )
+
+          automation_tasks_xml = []
+
+          sorted_tasks = sorted(
+              tasks,
+              key=lambda item: int(item.get("sequence", 0)),
+          )
+
+          for task_index, task in enumerate(sorted_tasks, start=1):
+              activities_xml = []
+
+              sorted_activities = sorted(
+                  task["activities"],
+                  key=lambda item: int(item.get("sequence", 0)),
+              )
+
+              for activity_index, activity in enumerate(
+                  sorted_activities,
+                  start=1,
+              ):
+                  query = activity["definition"]
+                  target = query["targetDataExtension"]
+
+                  production_de = get_de(target["customerKey"])
+                  if production_de is None:
+                      raise RuntimeError(
+                          f"Target DE {target['customerKey']} does not exist "
+                          "in Production. Automation deployment stopped."
+                      )
+
+                  production_query = get_query(query["customerKey"])
+
+                  if production_query is None:
+                      query_xml = (
+                          f"<CustomerKey>{esc(query['customerKey'])}</CustomerKey>"
+                          f"<Name>{esc(query['name'])}</Name>"
+                          f"<Description>{esc(query.get('description', ''))}</Description>"
+                          f"<QueryText>{esc(query['queryText'])}</QueryText>"
+                          f"<TargetType>{esc(query['targetType'])}</TargetType>"
+                          f"<TargetUpdateType>{esc(query['targetUpdateType'])}</TargetUpdateType>"
+                          "<DataExtensionTarget>"
+                          f"<ObjectID>{esc(production_de['objectId'])}</ObjectID>"
+                          f"<CustomerKey>{esc(production_de['customerKey'])}</CustomerKey>"
+                          f"<Name>{esc(production_de['name'])}</Name>"
+                          "</DataExtensionTarget>"
+                      )
+
+                      new_query_id = create(
+                          "QueryDefinition",
+                          query_xml,
+                      )
+
+                      time.sleep(2)
+                      production_query = get_query(query["customerKey"])
+
+                      if (
+                          production_query is None
+                          or production_query["objectId"] != new_query_id
+                      ):
+                          raise RuntimeError(
+                              f"{query['customerKey']}: "
+                              "QueryDefinition verification failed."
+                          )
+                  else:
+                      equivalent = (
+                          production_query["name"] == query["name"]
+                          and normalize_sql(production_query["queryText"])
+                              == normalize_sql(query["queryText"])
+                          and production_query["targetType"]
+                              == query["targetType"]
+                          and production_query["targetUpdateType"]
+                              == query["targetUpdateType"]
+                          and production_query["target"].get("customerKey")
+                              == target["customerKey"]
+                      )
+
+                      if not equivalent:
+                          raise RuntimeError(
+                              f"{query['customerKey']}: existing Production "
+                              "QueryDefinition differs. CREATE-only POC will "
+                              "not modify it."
+                          )
+
+                  activity_name = activity.get("name") or query["name"]
+                  activity_key = (
+                      activity.get("customerKey")
+                      or query["customerKey"]
+                  )
+
+                  activities_xml.append(
+                      "<Activity>"
+                      f"<Name>{esc(activity_name)}</Name>"
+                      f"<CustomerKey>{esc(activity_key)}</CustomerKey>"
+                      f"<Sequence>{activity_index}</Sequence>"
+                      '<ActivityObject xsi:type="QueryDefinition">'
+                      f"<ObjectID>{esc(production_query['objectId'])}</ObjectID>"
+                      f"<CustomerKey>{esc(production_query['customerKey'])}</CustomerKey>"
+                      f"<Name>{esc(production_query['name'])}</Name>"
+                      "</ActivityObject>"
+                      "</Activity>"
+                  )
+
+              task_name = task.get("name") or f"Step {task_index}"
+
+              # Retrieval exposes Task ObjectID/name/sequence but not a reusable
+              # source Task CustomerKey. This key is generated deterministically
+              # from approved Automation CustomerKey + task sequence.
+              task_key = (
+                  f"{automation['customerKey']}_TASK_{task_index}"
+              )
+
+              automation_tasks_xml.append(
+                  "<AutomationTask>"
+                  f"<Name>{esc(task_name)}</Name>"
+                  f"<CustomerKey>{esc(task_key)}</CustomerKey>"
+                  f"<Sequence>{task_index}</Sequence>"
+                  "<AutomationTaskType>Query</AutomationTaskType>"
+                  "<Activities>"
+                  + "".join(activities_xml)
+                  + "</Activities>"
+                  "</AutomationTask>"
+              )
+
+          automation_xml = (
+              f"<CustomerKey>{esc(automation['customerKey'])}</CustomerKey>"
+              f"<Name>{esc(automation['name'])}</Name>"
+              f"<Description>{esc(automation.get('description', ''))}</Description>"
+              "<AutomationTasks>"
+              + "".join(automation_tasks_xml)
+              + "</AutomationTasks>"
+          )
+
+          automation_object_id = create(
+              "Automation",
+              automation_xml,
+          )
+
+          print("Automation Create NewObjectID:", automation_object_id)
+
+          # Verification uses the relationship chain already proven during
+          # Sandbox retrieval: Automation CustomerKey -> Program -> Task -> Activity.
+          time.sleep(2)
+
+          programs = retrieve(
+              "Program",
+              ["ObjectID", "CustomerKey", "Name", "Status"],
+              "CustomerKey",
+              automation["customerKey"],
+          )
+          programs = [
+              p for p in programs
+              if child_text(p, "CustomerKey") == automation["customerKey"]
+          ]
+
+          if len(programs) != 1:
+              raise RuntimeError(
+                  f"Expected exactly one Production Program; got {len(programs)}."
+              )
+
+          program_id = child_text(programs[0], "ObjectID")
+
+          if program_id != automation_object_id:
+              raise RuntimeError(
+                  "Production Program ObjectID does not match "
+                  "Automation Create NewObjectID."
+              )
+
+          production_tasks = retrieve(
+              "Task",
+              ["ObjectID", "Program.ObjectID", "Name", "Sequence"],
+              "Program.ObjectID",
+              program_id,
+          )
+
+          if len(production_tasks) != len(sorted_tasks):
+              raise RuntimeError(
+                  f"Task count mismatch: expected {len(sorted_tasks)}, "
+                  f"got {len(production_tasks)}."
+              )
+
+          activity_count = 0
+
+          for production_task in production_tasks:
+              task_id = child_text(production_task, "ObjectID")
+              activities = retrieve(
+                  "Activity",
+                  [
+                      "ObjectID",
+                      "Task.ObjectID",
+                      "Definition.ObjectID",
+                      "CustomerKey",
+                      "Name",
+                      "Sequence",
+                  ],
+                  "Task.ObjectID",
+                  task_id,
+              )
+              activity_count += len(activities)
+
+          expected_activity_count = sum(
+              len(task["activities"])
+              for task in sorted_tasks
+          )
+
+          if activity_count != expected_activity_count:
+              raise RuntimeError(
+                  f"Activity count mismatch: expected "
+                  f"{expected_activity_count}, got {activity_count}."
+              )
+
+          print("")
+          print("==========================================")
+          print("PRODUCTION AUTOMATION DEPLOYMENT VERIFIED")
+          print("==========================================")
+          print("Automation:", automation["name"])
+          print("CustomerKey:", automation["customerKey"])
+          print("Program ObjectID:", program_id)
+          print("Tasks:", len(production_tasks))
+          print("Activities:", activity_count)
+          print("Schedule deployed: NO")
+          print("Activated: NO")
+          print("Executed: NO")
+          print("==========================================")
+          PY
+
+      - name: Deployment complete
+        run: |
+          echo "Production Automation structure verified."
+          echo "No schedule was deployed."
+          echo "Automation was not activated."
+          echo "Automation was not executed."
