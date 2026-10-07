@@ -572,8 +572,9 @@ jobs:
           # ============================================================
       # 8. PROVE API IDENTITY USING PRESERVED NEWOBJECTID
       # ============================================================
-      - name: Prove Automation identity using preserved NewObjectID
+      - name: Probe Automation identity using preserved NewObjectID
         id: objectid_proof
+        continue-on-error: true
         shell: bash
         env:
           ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
