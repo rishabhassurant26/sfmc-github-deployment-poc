@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.1",
+  "schemaVersion": "1.2",
   "assetType": "automation",
   "environment": "sandbox",
   "businessUnitMid": "524002130",
@@ -16,7 +16,9 @@
   },
   "identity": {
     "customerKeyResolved": true,
-    "objectIdReturned": false
+    "objectIdReturned": false,
+    "preservedCreateObjectId": "",
+    "preservedObjectIdIdentityProven": false
   },
   "discovery": {
     "queryDefinitionsRetrieved": 21,
