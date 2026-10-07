@@ -1504,6 +1504,9 @@ jobs:
 
           SCHEDULE_PARENT_DESCRIBE_STATUS: ${{ steps.schedule_parent_describe.outputs.describe_status }}
           SCHEDULE_RELEVANT_PROPERTY_COUNT: ${{ steps.schedule_parent_describe.outputs.schedule_relevant_count }}
+
+          SCHEDULE_ID_STATUS: ${{ steps.schedule_id.outputs.discovery_status }}
+          RESOLVED_SCHEDULE_ID: ${{ steps.schedule_id.outputs.schedule_id }}
         run: |
           set -euo pipefail
 
@@ -2891,7 +2894,349 @@ jobs:
           PY
 
 
-      # 16. BUILD DEFINITION
+      # ============================================================
+      # 16. RETRIEVE PROGRAM SCHEDULE.ID
+      #
+      # Live Describe proved Program.Schedule.ID is retrievable.
+      # Program itself is already resolved dynamically from the
+      # Automation CustomerKey.
+      #
+      # This step retrieves ONLY the proven Schedule.ID property and
+      # cross-checks the returned Program identity. No schedule details,
+      # recurrence, dates, or standalone ScheduleDefinition retrieval
+      # are guessed here.
+      # ============================================================
+      - name: Retrieve Schedule ID from resolved Program
+        id: schedule_id
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+          PROGRAM_OBJECT_ID: ${{ steps.program_discovery.outputs.program_object_id }}
+        run: |
+          set -euo pipefail
+
+          export ACCESS_TOKEN
+          export SOAP_URL
+          export PROGRAM_OBJECT_ID
+
+          python3 <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+          from xml.sax.saxutils import escape
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+          program_object_id = (
+              os.environ.get("PROGRAM_OBJECT_ID", "")
+              or ""
+          ).strip()
+
+          if not program_object_id:
+              raise SystemExit(
+                  "Resolved Program ObjectID is unavailable; "
+                  "Schedule.ID will not be guessed."
+              )
+
+          body = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:et="http://exacttarget.com/wsdl/partnerAPI"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+            <soapenv:Header>
+              <fueloauth xmlns="http://exacttarget.com">{escape(token)}</fueloauth>
+            </soapenv:Header>
+
+            <soapenv:Body>
+              <et:RetrieveRequestMsg>
+                <et:RetrieveRequest>
+                  <et:ObjectType>Program</et:ObjectType>
+
+                  <et:Properties>ObjectID</et:Properties>
+                  <et:Properties>CustomerKey</et:Properties>
+                  <et:Properties>Name</et:Properties>
+                  <et:Properties>Schedule.ID</et:Properties>
+
+                  <et:Filter xsi:type="et:SimpleFilterPart">
+                    <et:Property>ObjectID</et:Property>
+                    <et:SimpleOperator>equals</et:SimpleOperator>
+                    <et:Value>{escape(program_object_id)}</et:Value>
+                  </et:Filter>
+
+                </et:RetrieveRequest>
+              </et:RetrieveRequestMsg>
+            </soapenv:Body>
+
+          </soapenv:Envelope>
+          """
+
+          request = urllib.request.Request(
+              soap_url + "/Service.asmx",
+              data=body.encode("utf-8"),
+              headers={
+                  "Content-Type": "text/xml; charset=UTF-8",
+                  "SOAPAction": "Retrieve"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(request) as response:
+                  xml_data = response.read()
+          except urllib.error.HTTPError as exc:
+              response_text = exc.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+              print(response_text)
+              raise SystemExit(
+                  f"Program Schedule.ID Retrieve HTTP {exc.code}"
+              )
+
+          with open(
+              "program-schedule-id-response.xml",
+              "wb"
+          ) as f:
+              f.write(xml_data)
+
+          root = ET.fromstring(xml_data)
+
+          def local_name(tag):
+              return tag.split("}")[-1]
+
+          overall = ""
+          request_id = ""
+          programs = []
+
+          for element in root.iter():
+              name = local_name(element.tag)
+
+              if name == "OverallStatus":
+                  overall = (element.text or "").strip()
+
+              elif name == "RequestID":
+                  request_id = (element.text or "").strip()
+
+              elif name == "Results":
+                  result_type = (
+                      element.attrib.get(
+                          "{http://www.w3.org/2001/XMLSchema-instance}type",
+                          ""
+                      )
+                      or ""
+                  )
+
+                  # The RetrieveRequest is Program-scoped. Parse the
+                  # returned Program fields without assuming namespace
+                  # prefixes.
+                  program = {
+                      "ObjectID": "",
+                      "CustomerKey": "",
+                      "Name": "",
+                      "Schedule": {
+                          "ID": ""
+                      }
+                  }
+
+                  for child in list(element):
+                      child_name = local_name(child.tag)
+
+                      if child_name in (
+                          "ObjectID",
+                          "CustomerKey",
+                          "Name"
+                      ):
+                          program[child_name] = (
+                              child.text or ""
+                          ).strip()
+
+                      elif child_name == "Schedule":
+                          for schedule_child in list(child):
+                              if (
+                                  local_name(schedule_child.tag)
+                                  == "ID"
+                              ):
+                                  program["Schedule"]["ID"] = (
+                                      schedule_child.text or ""
+                                  ).strip()
+
+                  # Ignore non-object wrapper Results if any.
+                  if (
+                      program["ObjectID"]
+                      or program["CustomerKey"]
+                      or program["Name"]
+                      or program["Schedule"]["ID"]
+                  ):
+                      programs.append(program)
+
+          print("")
+          print("============================================")
+          print("PROGRAM -> SCHEDULE.ID RETRIEVE")
+          print("============================================")
+          print("SOAP Status:", overall)
+          print("Requested Program ObjectID:", program_object_id)
+          print("Programs returned:", len(programs))
+          print("")
+
+          result = {
+              "status": "",
+              "soapStatus": overall,
+              "requestId": request_id,
+              "requestedProgramObjectId": program_object_id,
+              "programsReturned": len(programs),
+              "program": None,
+              "scheduleId": ""
+          }
+
+          if overall not in ("OK", "MoreDataAvailable"):
+              result["status"] = "SOAP_ERROR"
+
+              with open(
+                  "schedule-id-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              raise SystemExit(
+                  "Program Schedule.ID Retrieve did not return "
+                  "a successful SOAP status."
+              )
+
+          if len(programs) != 1:
+              result["status"] = "PROGRAM_NOT_UNIQUE"
+
+              with open(
+                  "schedule-id-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              raise SystemExit(
+                  "Expected exactly one Program for the resolved "
+                  "Program ObjectID."
+              )
+
+          program = programs[0]
+          returned_program_object_id = (
+              program.get("ObjectID", "")
+              or ""
+          ).strip()
+
+          schedule_id = (
+              program.get("Schedule", {}).get("ID", "")
+              or ""
+          ).strip()
+
+          result["program"] = program
+          result["scheduleId"] = schedule_id
+
+          print(
+              "Program ObjectID:",
+              returned_program_object_id
+          )
+          print(
+              "Program CustomerKey:",
+              program.get("CustomerKey", "")
+          )
+          print(
+              "Program Name:",
+              program.get("Name", "")
+          )
+          print(
+              "Schedule.ID:",
+              schedule_id or "[not returned]"
+          )
+          print("")
+
+          if returned_program_object_id != program_object_id:
+              result["status"] = "PROGRAM_CROSSCHECK_FAILED"
+
+              with open(
+                  "schedule-id-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              raise SystemExit(
+                  "Returned Program ObjectID does not match the "
+                  "already-resolved Program ObjectID."
+              )
+
+          if not schedule_id:
+              result["status"] = "SCHEDULE_ID_NOT_RETURNED"
+
+              with open(
+                  "schedule-id-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              raise SystemExit(
+                  "Program was retrieved successfully but "
+                  "Schedule.ID was not returned."
+              )
+
+          result["status"] = "SCHEDULE_ID_RESOLVED"
+
+          with open(
+              "schedule-id-discovery.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  result,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a"
+          ) as f:
+              f.write("discovery_status=SCHEDULE_ID_RESOLVED\n")
+              f.write(
+                  "schedule_id="
+                  + schedule_id
+                  + "\n"
+              )
+
+          print(
+              "RESULT: PROGRAM -> SCHEDULE.ID RELATIONSHIP RESOLVED"
+          )
+          print("============================================")
+          PY
+
+
+      # 17. BUILD DEFINITION
       #
       # IMPORTANT:
       # Program discovery is recorded as discovery evidence only.
@@ -3221,7 +3566,7 @@ jobs:
 
 
       # ============================================================
-      # 17. SAVE RESULT
+      # 18. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -3324,6 +3669,16 @@ jobs:
             fi
           done
 
+          if [ -f schedule-id-discovery.json ]; then
+            cp schedule-id-discovery.json \
+              "$OUTPUT_DIR/schedule-id-discovery.json"
+          fi
+
+          if [ -f program-schedule-id-response.xml ]; then
+            cp program-schedule-id-response.xml \
+              "$OUTPUT_DIR/program-schedule-id-response.xml"
+          fi
+
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Saved to:"
@@ -3331,7 +3686,7 @@ jobs:
 
 
       # ============================================================
-      # 18. DISPLAY RESULT
+      # 19. DISPLAY RESULT
       # ============================================================
       - name: Display retrieved definition
         shell: bash
@@ -3435,9 +3790,20 @@ jobs:
               "$OUTPUT_DIR/schedule-parent-describe.json"
           fi
 
+          if [ -f "$OUTPUT_DIR/schedule-id-discovery.json" ]; then
+
+            echo ""
+            echo "============================================"
+            echo "PROGRAM -> SCHEDULE.ID DISCOVERY"
+            echo "============================================"
+
+            jq . \
+              "$OUTPUT_DIR/schedule-id-discovery.json"
+          fi
+
 
       # ============================================================
-      # 19. COMMIT
+      # 20. COMMIT
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -3471,7 +3837,7 @@ jobs:
 
 
       # ============================================================
-      # 20. FINAL RESULT
+      # 21. FINAL RESULT
       # ============================================================
       - name: Retrieval complete
         shell: bash
@@ -3602,6 +3968,14 @@ jobs:
           echo ""
           echo "Schedule/source/time-related properties discovered:"
           echo "${SCHEDULE_RELEVANT_PROPERTY_COUNT:-0}"
+
+          echo ""
+          echo "Program -> Schedule.ID status:"
+          echo "${SCHEDULE_ID_STATUS:-[not available]}"
+
+          echo ""
+          echo "Resolved Schedule.ID:"
+          echo "${RESOLVED_SCHEDULE_ID:-[not available]}"
 
           echo ""
           echo "IMPORTANT:"
