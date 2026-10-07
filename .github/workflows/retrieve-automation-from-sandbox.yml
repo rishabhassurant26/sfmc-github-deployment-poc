@@ -4051,7 +4051,39 @@ jobs:
                   if not target: raise SystemExit(f'Target DE key missing in query {qkey}')
                   add(target,'target',qkey)
 
-          field_props=['Name','FieldType','MaxLength','IsPrimaryKey','IsRequired','DefaultValue','Ordinal','Precision','Scale']
+          # Match the proven standalone DE retrieval behavior: ask this tenant
+          # which DataExtensionField properties are actually retrievable, then
+          # request only that supported subset. Do not hardcode Precision/Scale.
+          def describe_retrievable(obj):
+              body=f'''<?xml version="1.0" encoding="UTF-8"?>
+              <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:et="http://exacttarget.com/wsdl/partnerAPI">
+              <soapenv:Header><fueloauth xmlns="http://exacttarget.com">{esc(token)}</fueloauth></soapenv:Header>
+              <soapenv:Body><et:DefinitionRequestMsg><et:DescribeRequests><et:ObjectDefinitionRequest>
+              <et:ObjectType>{esc(obj)}</et:ObjectType>
+              </et:ObjectDefinitionRequest></et:DescribeRequests></et:DefinitionRequestMsg></soapenv:Body></soapenv:Envelope>'''
+              req=urllib.request.Request(soap+'/Service.asmx',data=body.encode(),headers={'Content-Type':'text/xml; charset=UTF-8','SOAPAction':'Describe'},method='POST')
+              try:
+                  with urllib.request.urlopen(req) as r: raw=r.read()
+              except urllib.error.HTTPError as e:
+                  print(e.read().decode(errors='replace')); raise
+              x=ET.fromstring(raw)
+              faults=[(n.text or '').strip() for n in x.iter() if local(n.tag)=='faultstring']
+              if faults: raise SystemExit(f'{obj} Describe failed: {faults[0]}')
+              supported=set()
+              for prop in x.iter():
+                  if local(prop.tag)!='Properties': continue
+                  name=val(prop,'Name'); retrievable=val(prop,'IsRetrievable').lower()=='true'
+                  if name and retrievable: supported.add(name)
+              if not supported: raise SystemExit(f'{obj} Describe returned no retrievable properties')
+              return supported
+
+          candidates=['ObjectID','CustomerKey','Name','FieldType','MaxLength','IsPrimaryKey','IsRequired','DefaultValue','Ordinal','Precision','Scale']
+          supported=describe_retrievable('DataExtensionField')
+          field_props=[p for p in candidates if p in supported]
+          required=['Name','FieldType','IsPrimaryKey','IsRequired','Ordinal']
+          missing=[p for p in required if p not in field_props]
+          if missing: raise SystemExit('Required DataExtensionField properties are not retrievable: '+', '.join(missing))
+          print('Tenant-supported DataExtensionField properties:',', '.join(field_props))
           manifest=[]
           for key,d in sorted(deps.items()):
               node=d['node']; fields=[]
