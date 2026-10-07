@@ -9,6 +9,12 @@
     "Description": "E2E Query created from GitHub CI/CD",
     "QueryText": "SELECT CustomerID, FirstName, Email, [Status] FROM [CICD_CUSTOMER_MASTER_DE] WHERE [Status] = 'Active'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "E2EDE_32855157702_1",
+      "Name": "GITHUB_E2E_TARGET_DE_32855157702_1"
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -21,6 +27,13 @@
     "Description": "",
     "QueryText": "SELECT\nSubscriberKey,\nEmailAddress,\nStatus\nFROM _Subscribers\nWHERE Status = 'Unsubscribed'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "3C74AC21-80A4-4DC3-BE33-62372AAC707B",
+      "Name": "Unsubscribe",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -33,6 +46,12 @@
     "Description": "Query Activity created through GitHub CI/CD",
     "QueryText": "SELECT         CustomerID,          FirstName,             Email,          [Status]         FROM CICD_CUSTOMER_MASTER_DE2         WHERE [Status] = 'Active'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "GITHUB_ACTIVE_CUSTOMERS_DE_V1",
+      "Name": "GITHUB_ACTIVE_CUSTOMERS_DE_V1"
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -45,6 +64,13 @@
     "Description": "",
     "QueryText": "SELECT\n    CONCAT(POLICYNO, '_', CLAIMNO) AS SubscriberKey,\n    POLICYNO,\n    RISKTYPE,\n    MAKE,\n    MODEL,\n    YEAR,\n    FNAME,\n    LNAME,\n    'demonikhil76@gmail.com' AS EMAIL,\n    CLAIMNO,\n    SETTLED,\n    CLAIM\nFROM DE_MBIClaims_Clean\nWHERE CLAIMNO = 'C050091314'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "EE64016B-1E9D-4FDA-886F-C914D15FEF92",
+      "Name": "Finance_Claim_Test",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -57,6 +83,13 @@
     "Description": "",
     "QueryText": "SELECT\n    src.Policy_Number                       AS POLICYNO,\n    src.Product_Group                       AS RISKTYPE,\n    src.Make                                AS MAKE,\n    src.Model                               AS MODEL,\n    src.Year_Of_Manu                        AS YEAR,\n    src.Insured_First_Name                  AS FNAME,\n    src.Insured_Last_Name                   AS LNAME,\n    LTRIM(RTRIM(src.Claim_Client_Email))    AS EMAIL,\n    src.Claim_Number                        AS CLAIMNO,\n    src.First_Settled_Date                  AS SETTLED,\n    'Standard'                              AS CLAIM\n\nFROM DE_Raw_Claims src\n\n/* ── RULE 5: Deduplication ───────────────────────────────────\n   P050481286 had 3 claims all settled on same day but different\n   timestamps (10:33:41, 10:33:47, 10:33:53). The earliest\n   timestamp (C050093238) is kept. MIN(First_Settled_Date)\n   handles this correctly including the time component.        */\n/* When multiple claims settle on the exact same date,\n   fall back to MIN(Claim_Number) as a stable tiebreaker */\nINNER JOIN (\n    SELECT\n        Policy_Number,\n        MIN(Claim_Number) AS KeepClaim\n    FROM DE_Raw_Claims\n    WHERE Product_Group = 'MBI'\n      AND Claim_Client_Email IS NOT NULL\n      AND LTRIM(RTRIM(Claim_Client_Email)) <> ''\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE 'noemail@%'\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE 'tba@%'\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE 'tbc@%'\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE 'tbd@%'\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE '%@noemail%'\n      AND Claim_Number NOT IN (\n          SELECT Claim_Number FROM DE_ExcludedClaims\n      )\n    GROUP BY Policy_Number\n) dedup\n    ON  src.Policy_Number = dedup.Policy_Number\n    AND src.Claim_Number  = dedup.KeepClaim\n\nWHERE\n    /* ── RULE 1: MBI only ──────────────────────────────────── */\n    src.Product_Group = 'MBI'\n\n    /* ── RULE 2: Email must exist ──────────────────────────── */\nAND src.Claim_Client_Email IS NOT NULL\nAND LTRIM(RTRIM(src.Claim_Client_Email)) <> ''\n\n    /* ── RULE 3: Fake email suppression ───────────────────── */\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE 'noemail@%'\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE 'tba@%'\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE 'tbc@%'\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE 'tbd@%'\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE '%@noemail%'\n\n    /* ── RULE 4: Excluded claims suppression ──────────────── */\nAND src.Claim_Number NOT IN (\n    SELECT Claim_Number FROM DE_ExcludedClaims\n)",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "F14DB6A3-5979-49B9-8632-A8AE84AA5E09",
+      "Name": "DE_MBIClaims_Clean",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -69,6 +102,13 @@
     "Description": "",
     "QueryText": "SELECT DISTINCT\n    s.SubscriberKey,\n    'SANDBOX' AS BusinessUnit_Name,\n    '524002130' AS BusinessUnit_MId,\n    j.JourneyName,\n    j.VersionNumber As Journey_Version,\n    GETDATE() AS RunDate\nFROM _Sent s\n    INNER JOIN _JourneyActivity ja\nON s.TriggererSendDefinitionObjectID = ja.JourneyActivityObjectID\n    INNER JOIN _Journey j\nON ja.VersionID = j.VersionID\nWHERE\n    s.EventDate >= DATEADD(MONTH,-6,GETDATE())",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "AC5A214A-FC92-42BF-8675-8E997EC0FDA3",
+      "Name": "BU_Jounrey_Data",
+      "Description": ""
+    },
     "TargetUpdateType": "Append"
   },
   {
@@ -81,6 +121,13 @@
     "Description": "",
     "QueryText": "/* ============================================================\n   SQL-01: Customer Services CSAT — Clean & Transform\n   Source : DE_Raw_CustomerServices   (36 rows raw)\n   Target : DE_CustomerServices_Clean (33 rows expected)\n   \n   Rules applied:\n   1. Insured_Contact_Current_Flag = 'Y'  (all rows in test file are Y)\n   2. Email not blank / null\n   3. Fake email suppression  (removes P050538110 — noemail@noemail.com)\n   4. Car dealer email suppression\n   5. Dedup: one row per Policy_Number\n              P050538211 → keep REGO XP2472  (MIN alphabetically)\n              P050538212 → keep Policy Type 'MTA of New Policy' (MIN alphabetically)\n   6. STAFF = first word of Customer_Service_Name\n   ============================================================ */\n\nSELECT\n    d.Policy_Number                                     AS POLICYNO,\n    d.Policy_Type                                       AS POLICYTYPE,\n    d.Cover_Description                                 AS COVER,\n    d.Agent_Name                                        AS DEALER,\n    d.Policy_Inception_TPI_Date                         AS INCEPTION,\n    d.Insured_First_Name                                AS FNAME,\n    d.Insured_Last_Name                                 AS LNAME,\n    d.Rego_No                                           AS REGO,\n    d.Make                                              AS MAKE,\n    d.Model                                             AS MODEL,\n    LTRIM(RTRIM(d.Insured_Contact_Number))              AS EMAIL,\n\n    /* STAFF: extract first name only from \"Firstname Lastname\" */\n    CASE\n        WHEN CHARINDEX(' ', LTRIM(RTRIM(d.Customer_Service_Name))) > 0\n        THEN LEFT(\n                LTRIM(RTRIM(d.Customer_Service_Name)),\n                CHARINDEX(' ', LTRIM(RTRIM(d.Customer_Service_Name))) - 1\n             )\n        ELSE LTRIM(RTRIM(d.Customer_Service_Name))\n    END                                                 AS STAFF\n\nFROM DE_Raw_CustomerServices d\n\n/* ── DEDUPLICATION ──────────────────────────────────────────────\n   For P050538211: two different REGOs (XP2472, ZR2745) — keep XP2472\n   For P050538212: two different Policy Types (MTA, New Business) — keep MTA\n   Strategy: for each Policy_Number, keep the row where\n   (Policy_Type, Rego_No) = the MIN combination */\nINNER JOIN (\n    SELECT\n        Policy_Number,\n        MIN(Policy_Type) AS KeepPolicyType,\n        MIN(Rego_No)     AS KeepRego\n    FROM DE_Raw_CustomerServices\n    WHERE Insured_Contact_Current_Flag = 'Y'\n      AND Insured_Contact_Number IS NOT NULL\n      AND LTRIM(RTRIM(Insured_Contact_Number)) <> ''\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE 'noemail@%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE 'tba@%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE 'tbc@%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE 'tbd@%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE '%@noemail%'\n    GROUP BY Policy_Number\n) dedup\n    ON  d.Policy_Number  = dedup.Policy_Number\n    AND d.Policy_Type    = dedup.KeepPolicyType\n    AND d.Rego_No        = dedup.KeepRego\n\nWHERE\n    /* Rule 1 — Active contact record only */\n    d.Insured_Contact_Current_Flag = 'Y'\n\n    /* Rule 2 — Email must exist */\nAND d.Insured_Contact_Number IS NOT NULL\nAND LTRIM(RTRIM(d.Insured_Contact_Number)) <> ''\n\n    /* Rule 3 — Fake email suppression */\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE 'noemail@%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE 'tba@%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE 'tbc@%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE 'tbd@%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE '%@noemail%'\n\n    /* Rule 4 — Car dealer email suppression */\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE '%motor%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE '%vehicle%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE '%automotive%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE '%carcentre%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE '%caryard%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE '%carsales%'\nAND LOWER(LTRIM(RTRIM(d.Insured_Contact_Number))) NOT LIKE '%valuemotors%'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "527326EF-E162-4CF6-AE70-4987FF1F97D5",
+      "Name": "DE_CustomerServices_Clean",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -93,6 +140,13 @@
     "Description": "",
     "QueryText": "SELECT\n    src.Policy_Number                       AS POLICYNO,\n    src.Product_Group                       AS RISKTYPE,\n    src.Make                                AS MAKE,\n    src.Model                               AS MODEL,\n    src.Year_Of_Manu                        AS YEAR,\n    src.Insured_First_Name                  AS FNAME,\n    src.Insured_Last_Name                   AS LNAME,\n    LTRIM(RTRIM(src.Claim_Client_Email))    AS EMAIL,\n    src.Claim_Number                        AS CLAIMNO,\n    src.First_Settled_Date                  AS SETTLED,\n\n    /* ── RULE 7: Windscreen routing ──────────────────────────\n       MV07 WINDSCREEN = standard MVI windscreen claim\n       PC07 WINDSCREEN = PCC (personal contract cover) windscreen\n       Both route to 'Windscreen & keys' journey             */\n    CASE\n        WHEN src.Claim_Primary_Cause_Description LIKE '%WINDSCREEN%'\n        THEN 'Windscreen & keys'\n        ELSE 'Standard'\n    END                                     AS CLAIM\n\nFROM DE_Raw_Claims src\n\n/* ── RULE 6: Deduplication ───────────────────────────────────\n   When a policy has multiple claims (e.g. P050267252 had 2\n   windscreen claims in the same week), keep only the earliest\n   settled claim to avoid double-emailing the same customer.\n   MIN(First_Settled_Date) per Policy_Number = earliest claim. */\nINNER JOIN (\n    SELECT\n        Policy_Number,\n        MIN(First_Settled_Date) AS EarliestSettled\n    FROM DE_Raw_Claims\n    WHERE Product_Group IN ('MVI','MCI','PCC')\n      AND Product_Group NOT IN ('GAP','CPI','FPP','MPP','PPI','LPI')\n      AND Claim_Client_Email IS NOT NULL\n      AND LTRIM(RTRIM(Claim_Client_Email)) <> ''\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE 'noemail@%'\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE 'tba@%'\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE 'tbc@%'\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE 'tbd@%'\n      AND LOWER(LTRIM(RTRIM(Claim_Client_Email))) NOT LIKE '%@noemail%'\n      AND Claim_Number NOT IN (\n          SELECT Claim_Number FROM DE_ExcludedClaims\n      )\n    GROUP BY Policy_Number\n) dedup\n    ON  src.Policy_Number       = dedup.Policy_Number\n    AND src.First_Settled_Date  = dedup.EarliestSettled\n\nWHERE\n    /* ── RULE 1: Motor product groups only ─────────────────── */\n    src.Product_Group IN ('MVI','MCI','PCC')\n\n    /* ── RULE 2: Finance claims excluded ───────────────────── */\nAND src.Product_Group NOT IN ('GAP','CPI','FPP','MPP','PPI','LPI')\n\n    /* ── RULE 3: Email must exist ──────────────────────────── */\nAND src.Claim_Client_Email IS NOT NULL\nAND LTRIM(RTRIM(src.Claim_Client_Email)) <> ''\n\n    /* ── RULE 4: Fake email suppression ───────────────────── */\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE 'noemail@%'\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE 'tba@%'\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE 'tbc@%'\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE 'tbd@%'\nAND LOWER(LTRIM(RTRIM(src.Claim_Client_Email))) NOT LIKE '%@noemail%'\n\n    /* ── RULE 5: Excluded claims suppression ──────────────── */\nAND src.Claim_Number NOT IN (\n    SELECT Claim_Number FROM DE_ExcludedClaims\n)",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "FA94CAC0-D6F8-49F0-BB3D-30BA92C91114",
+      "Name": "DE_MotorClaims_Clean",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -105,6 +159,12 @@
     "Description": "Query Activity created through GitHub CI/CD",
     "QueryText": "SELECT         CustomerID,          FirstName,             Email,          [Status]         FROM CICD_CUSTOMER_MASTER_DE2         WHERE [Status] = 'Active'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "GITHUB_ACTIVE_CUSTOMERS_DE_test",
+      "Name": "GITHUB_ACTIVE_CUSTOMERS_DE_test"
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -117,6 +177,13 @@
     "Description": "",
     "QueryText": "SELECT\n\n    /* ── Archive DE fields ── */\n    a.ArchiveKey,\n    a.EmailHTML,\n\n    a.EmailAddress,\n    a.SubscriberKey,\n\n    /* ── Send metadata from _Job Data View ── */\n    j.FromName,\n    j.FromEmail,\n    j.EmailSubject,\n    j.EmailName,\n    j.JobID,\n    a.SentDate ,\n\n    /* ── Journey details from _Job Data View ── */\n    j.TriggeredSendCustomerKey AS JourneyActivityKey,\n\n    /* ── Case fields from DE ── */\n    d.CaseId,\n    d.CaseNumber,\n    d.CaseStatus,\n    d.CaseType,\n    d.CaseSubject,\n    d.ContactFirstName,\n\n    /* ── Batch processing ID ── */\n    CONVERT(VARCHAR(100), GETUTCDATE(), 120) AS BatchProcessID\n\nFROM Email_HTML_Archive a\n\n/* Join to _Job Data View on JobID */\nLEFT JOIN _Job j\n    ON a.JobID = j.JobID\n\n/* Join to DE using EmailAddress */\nLEFT JOIN Test_Case_De_BCC d\n    ON a.EmailAddress = d.EmailAddress",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "D5EA53AB-97E0-43A1-908A-F7C7846D79CC",
+      "Name": "Email_HTML_Archive_Staging",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -129,6 +196,12 @@
     "Description": "E2E Query created from GitHub CI/CD",
     "QueryText": "SELECT CustomerID, FirstName, Email, [Status] FROM [CICD_CUSTOMER_MASTER_DE2] WHERE [Status] = 'Active'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "E2EDE_32856624467_1",
+      "Name": "GITHUB_E2E_TARGET_DE_32856624467_1"
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -141,6 +214,13 @@
     "Description": "This Query is designed to fetch Data from _subscribes Data table into Target DE",
     "QueryText": "SELECT\nusers.EmailAddress,\nPolicyNumber,\n\n FORMAT(s.DateUndeliverable, 'yyyy-MM-dd') AS AllSubDateUndeliverable,\n  FORMAT(s.DateUnsubscribed, 'yyyy-MM-dd') AS AllSubDateUnsub,\n    s.BounceCount AS AllSubBounceCount,\n s.Status AS AllSubscriberStatus\nFROM [Geico_Auto_Cancel_Report_v1] users\n\nLEFT JOIN ENT._Subscribers s\n    ON users.EmailAddress = s.SubscriberKey",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "A5EA200A-FE28-45AE-9B3B-E1C1E48F53C6",
+      "Name": "Geico_Auto_Cancel_Report_v1",
+      "Description": ""
+    },
     "TargetUpdateType": "Update"
   },
   {
@@ -153,6 +233,13 @@
     "Description": "",
     "QueryText": "SELECT\n    src.Policy_Number                               AS POLICYNO,\n    src.Policy_Type                                 AS POLICYTYPE,\n    src.Cover_Description                           AS COVER,\n    src.Agent_Name                                  AS DEALER,\n\n\n    src.Policy_Inception_TPI_Date                   AS INCEPTION,\n    src.Sale_Calendar_Date                          AS EXPIRY,\n\n    CASE\n        WHEN LTRIM(RTRIM(src.Insured_First_Name)) = 'X'\n        THEN 'Assurant customer'\n        ELSE LTRIM(RTRIM(src.Insured_First_Name))\n    END                                             AS FNAME,\n\n    src.Insured_Last_Name                           AS LNAME,\n    src.Rego_No                                     AS REGO,\n    src.Make                                        AS MAKE,\n    src.Model                                       AS MODEL,\n    LTRIM(RTRIM(src.Insured_Contact_Number))        AS EMAIL\n\nFROM DE_Raw_Dealer src\n\n\nINNER JOIN (\n    SELECT\n        LOWER(LTRIM(RTRIM(Insured_Contact_Number)))  AS NormEmail,\n        MIN(Policy_Number)                           AS KeepPolicy\n    FROM DE_Raw_Dealer\n    WHERE \n      Insured_Contact_Number IS NOT NULL\n      AND LTRIM(RTRIM(Insured_Contact_Number)) <> ''\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE 'noemail@%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE 'tba@%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE 'tbc@%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE 'tbd@%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE '%@noemail%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE '%motor%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE '%vehicle%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE '%automotive%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE '%wanganuicar%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE '%valuemotors%'\n      AND LOWER(LTRIM(RTRIM(Insured_Contact_Number))) NOT LIKE '%christchurchauto%'\n\n      AND LTRIM(RTRIM(Insured_Contact_Number)) NOT LIKE '`%'\n    \n      AND Agent_Name NOT LIKE '%Finance%'\n      AND Agent_Name NOT LIKE '%Financial%'\n      AND Agent_Name NOT LIKE '%Kiwibike%'\n      AND Agent_Name NOT LIKE '%Quashed%'\n \n    GROUP BY LOWER(LTRIM(RTRIM(Insured_Contact_Number)))\n) dedup\n    ON  LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) = dedup.NormEmail\n    AND src.Policy_Number = dedup.KeepPolicy\n\nWHERE\n  \n src.Agent_Name NOT LIKE '%Finance%'\nAND src.Agent_Name NOT LIKE '%Financial%'\nAND src.Agent_Name NOT LIKE '%Kiwibike%'\nAND src.Agent_Name NOT LIKE '%Quashed%'\n\n   \nAND src.Insured_Contact_Number IS NOT NULL\nAND LTRIM(RTRIM(src.Insured_Contact_Number)) <> ''\n\n    \nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE 'noemail@%'\nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE 'tba@%'\nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE 'tbc@%'\nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE 'tbd@%'\nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE '%@noemail%'\n\n  \nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE '%motor%'\nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE '%vehicle%'\nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE '%automotive%'\nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE '%wanganuicar%'\nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE '%valuemotors%'\nAND LOWER(LTRIM(RTRIM(src.Insured_Contact_Number))) NOT LIKE '%christchurchauto%'\n\n\nAND LTRIM(RTRIM(src.Insured_Contact_Number)) NOT LIKE '`%'\n\nAND LTRIM(RTRIM(src.Insured_Contact_Number)) NOT LIKE ':%'\nAND LTRIM(RTRIM(src.Insured_Contact_Number)) NOT LIKE '\"%'\nAND LTRIM(RTRIM(src.Insured_Contact_Number)) NOT LIKE '<%'\nAND LTRIM(RTRIM(src.Insured_Contact_Number)) NOT LIKE '>%'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "03DAD191-5ED9-4A42-BE65-0996503F9B16",
+      "Name": "DE_Dealer_Clean",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -165,6 +252,12 @@
     "Description": "Query Activity created through GitHub CI/CD",
     "QueryText": "SELECT         CustomerID,          FirstName,             Email,          [Status]         FROM CICD_CUSTOMER_MASTER_DE2         WHERE [Status] = 'Active'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "GITHUB_ACTIVE_CUSTOMERS_DE_V2",
+      "Name": "GITHUB_ACTIVE_CUSTOMERS_DE_V2"
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -177,6 +270,12 @@
     "Description": "Query Activity created through GitHub CI/CD",
     "QueryText": "SELECT         CustomerID,          FirstName,             Email,          [Status]         FROM CICD_CUSTOMER_MASTER_DE2         WHERE [Status] = 'Active'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "GITHUB_ACTIVE_CUSTOMERS_DE_Created",
+      "Name": "GITHUB_ACTIVE_CUSTOMERS_DE_Created"
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -189,6 +288,13 @@
     "Description": "This query is designed to find KPI like-Sent, Open, Click, Bounce, Unsub)",
     "QueryText": "SELECT\n    g.EmailAddress,\n    CONVERT(VARCHAR(10), Min(s.EventDate), 23) AS EmailSentDate,\n    CONVERT(VARCHAR(10), MAX(o.EventDate), 23) AS EmailOpenDate,\n    CONVERT(VARCHAR(10), MAX(b.EventDate), 23) AS EmailBounceDate,\n    CONVERT(VARCHAR(10), MAX(c.EventDate), 23) AS EmailClickDate,\n    CONVERT(VARCHAR(10), MAX(u.EventDate), 23) AS EmailUnsubscribeDate,\n    g.PolicyNumber,\n    s.SubscriberKey,\n  \n    MAX(s.JobID) AS JobID,\n    j.EmailName\nFROM Geico_Auto_Cxl_Comm g\n\nINNER JOIN _Sent s\n    ON g.EmailAddress = s.SubscriberKey\n    AND (\n        g.DateAdded IS NULL \n        OR CAST(g.DateAdded AS DATE) = CAST(s.EventDate AS DATE)\n    )\n    \nINNER JOIN _Job j\n    ON s.JobID = j.JobID\n    AND j.EmailName = 'Assurant and GEICO auto cross-sell'\n\nLEFT JOIN _Open o\n    ON s.SubscriberKey = o.SubscriberKey\n  AND o.JobID = s.JobID\n      AND o.ListID = s.ListID\n      AND o.BatchID = s.BatchID\n      AND o.SubscriberID = s.SubscriberID\n      AND o.EventDate >= s.EventDate\n\nLEFT JOIN _Bounce b\n    ON s.SubscriberKey = b.SubscriberKey\n    AND s.JobID = b.JobID\n\nLEFT JOIN _Click c\n    ON s.SubscriberKey = c.SubscriberKey\n    AND s.JobID = c.JobID\n\nLEFT JOIN _Unsubscribe u\n    ON s.SubscriberKey = u.SubscriberKey\n    AND s.JobID = u.JobID\n\nGROUP BY\n    g.EmailAddress,\n    g.PolicyNumber,\n    s.SubscriberKey,\n    j.EmailName",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "A5EA200A-FE28-45AE-9B3B-E1C1E48F53C6",
+      "Name": "Geico_Auto_Cancel_Report_v1",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -201,6 +307,13 @@
     "Description": "",
     "QueryText": "SELECT\n    ArchiveKey,\n    EmailHTML,\n    EmailAddress,\n    SubscriberKey,\n    FromName,\n    FromEmail,\n    EmailSubject,\n    EmailName,\n    JobID,\n    SentDate\n\n\n\nFROM [Email_Archive_10000_Records]",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "D5EA53AB-97E0-43A1-908A-F7C7846D79CC",
+      "Name": "Email_HTML_Archive_Staging",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -213,6 +326,13 @@
     "Description": "This Query is designed to fetch data from BU specific Unsubscribe in Target DE",
     "QueryText": "SELECT users.EmailAddress\n\n\t, POLICYNUMBER\n\n\t, buUnsub.BusinessUnitID AS BusinessUnitID\n\n    , buUnsub.SubscriberKey AS BuUnsubSubscriberKey\n\n    ,  FORMAT(buUnsub.UnsubDateUTC, 'yyyy-MM-dd') AS BuUnsubDate\n\n    , buUnsub.UnsubReason  AS BuUnsubReason\n\n\tFROM [Geico_Auto_Cancel_Report_v1] users\t\n\n\tLEFT JOIN ENT._BusinessUnitUnsubscribes AS buUnsub\n\n    ON users.EmailAddress = buUnsub.SubscriberKey",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "A5EA200A-FE28-45AE-9B3B-E1C1E48F53C6",
+      "Name": "Geico_Auto_Cancel_Report_v1",
+      "Description": ""
+    },
     "TargetUpdateType": "Update"
   },
   {
@@ -225,6 +345,13 @@
     "Description": "",
     "QueryText": "SELECT\n\n    /* ── Archive DE fields ── */\n    a.ArchiveKey,\n    a.EmailHTML,\n\n    a.EmailAddress,\n    a.SubscriberKey,\n\n    /* ── Send metadata from _Job Data View ── */\n    j.FromName,\n    j.FromEmail,\n    d.SubjectLine As EmailSubject,\n    j.EmailName,\n    j.JobID,\n    a.SentDate ,\n\n    /* ── Journey details from _Job Data View ── */\n    j.TriggeredSendCustomerKey AS JourneyActivityKey,\n\n\n    /* ── Batch processing ID ── */\n    CONVERT(VARCHAR(100), GETUTCDATE(), 120) AS BatchProcessID\n\nFROM Email_HTML_Archive a\n\n/* Join to _Job Data View on JobID */\nLEFT JOIN _Job j\n    ON a.JobID = j.JobID\n\n/* Join to DE using EmailAddress */\nLEFT JOIN QA_Updated_EventNotification d\n    ON a.EmailAddress = d.EmailAddress",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "799A0EE5-C570-41B7-BD99-9B46E186BDDA",
+      "Name": "Final_Staging_Email_Archieve",
+      "Description": ""
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -237,6 +364,12 @@
     "Description": "Query Activity created through GitHub CI/CD",
     "QueryText": "SELECT         CustomerID,          FirstName,             Email,          [Status]         FROM CICD_CUSTOMER_MASTER_DE         WHERE [Status] = 'Active'",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "GITHUB_ACTIVE_CUSTOMERS_DE",
+      "Name": "GITHUB_ACTIVE_CUSTOMERS_DE"
+    },
     "TargetUpdateType": "Overwrite"
   },
   {
@@ -249,6 +382,13 @@
     "Description": "Query created by Query Studio",
     "QueryText": "SELECT\n    rtrim(left(coalesce(CAST(g.EmailAddress as char(255)),'<null>'), 255)) as EmailAddress, rtrim(left(coalesce(CAST(CONVERT(VARCHAR(10), Min(s.EventDate), 23) as char(255)),'<null>'), 255)) as emailsentdate, rtrim(left(coalesce(CAST(CONVERT(VARCHAR(10), MAX(o.EventDate), 23) as char(255)),'<null>'), 255)) as emailopendate, rtrim(left(coalesce(CAST(CONVERT(VARCHAR(10), MAX(b.EventDate), 23) as char(255)),'<null>'), 255)) as emailbouncedate, rtrim(left(coalesce(CAST(CONVERT(VARCHAR(10), MAX(c.EventDate), 23) as char(255)),'<null>'), 255)) as emailclickdate, rtrim(left(coalesce(CAST(CONVERT(VARCHAR(10), MAX(u.EventDate), 23) as char(255)),'<null>'), 255)) as emailunsubscribedate, rtrim(left(coalesce(CAST(g.PolicyNumber as char(255)),'<null>'), 255)) as PolicyNumber, rtrim(left(coalesce(CAST(s.SubscriberKey as char(255)),'<null>'), 255)) as SubscriberKey, rtrim(left(coalesce(CAST(MAX(s.JobID) as char(255)),'<null>'), 255)) as jobid, rtrim(left(coalesce(CAST(j.EmailName as char(255)),'<null>'), 255)) as EmailName from Geico_Auto_Cxl_Comm g\n\nINNER JOIN _Sent s\n    ON g.EmailAddress = s.SubscriberKey\n    AND (\n        g.DateAdded IS NULL \n        OR CAST(g.DateAdded AS DATE) = CAST(s.EventDate AS DATE)\n    )\n    \nINNER JOIN _Job j\n    ON s.JobID = j.JobID\n    AND j.EmailName = 'Assurant and GEICO auto cross-sell'\n\nLEFT JOIN _Open o\n    ON s.SubscriberKey = o.SubscriberKey\n  AND o.JobID = s.JobID\n      AND o.ListID = s.ListID\n      AND o.BatchID = s.BatchID\n      AND o.SubscriberID = s.SubscriberID\n      AND o.EventDate >= s.EventDate\n\nLEFT JOIN _Bounce b\n    ON s.SubscriberKey = b.SubscriberKey\n    AND s.JobID = b.JobID\n\nLEFT JOIN _Click c\n    ON s.SubscriberKey = c.SubscriberKey\n    AND s.JobID = c.JobID\n\nLEFT JOIN _Unsubscribe u\n    ON s.SubscriberKey = u.SubscriberKey\n    AND s.JobID = u.JobID\n\nGROUP BY\n    g.EmailAddress,\n    g.PolicyNumber,\n    s.SubscriberKey,\n    j.EmailName",
     "TargetType": "DE",
+    "DataExtensionTarget": {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "CustomerKey": "QueryStudioResults at 2026-02-04T0718200000",
+      "Name": "QueryStudioResults at 2026-02-04T0718200000",
+      "Description": "Auto generated by Query Studio. Auto deletes after 24 hours."
+    },
     "TargetUpdateType": "Overwrite"
   }
 ]

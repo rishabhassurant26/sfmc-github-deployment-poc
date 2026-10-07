@@ -20,6 +20,11 @@
         "description": "",
         "queryText": "SELECT DISTINCT\n    s.SubscriberKey,\n    'SANDBOX' AS BusinessUnit_Name,\n    '524002130' AS BusinessUnit_MId,\n    j.JourneyName,\n    j.VersionNumber As Journey_Version,\n    GETDATE() AS RunDate\nFROM _Sent s\n    INNER JOIN _JourneyActivity ja\nON s.TriggererSendDefinitionObjectID = ja.JourneyActivityObjectID\n    INNER JOIN _Journey j\nON ja.VersionID = j.VersionID\nWHERE\n    s.EventDate >= DATEADD(MONTH,-6,GETDATE())",
         "targetType": "DE",
+        "targetDataExtension": {
+          "name": "BU_Jounrey_Data",
+          "customerKey": "AC5A214A-FC92-42BF-8675-8E997EC0FDA3",
+          "description": ""
+        },
         "targetUpdateType": "Append",
         "categoryId": "",
         "status": ""
