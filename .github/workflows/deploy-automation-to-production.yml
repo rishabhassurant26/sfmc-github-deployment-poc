@@ -55,9 +55,60 @@ jobs:
             exit 1
           fi
 
-          FILE="${ROOT}/${LOB}/${DIR}/${NAME}/definition.json"
-          [ -f "$FILE" ] || { echo "::error::Definition not found: $FILE"; exit 1; }
+          AUTOMATION_ROOT="${ROOT}/${LOB}/${DIR}"
+          [ -d "$AUTOMATION_ROOT" ] || {
+            echo "::error::Automation root not found: $AUTOMATION_ROOT"
+            exit 1
+          }
 
+          export AUTOMATION_ROOT NAME
+
+          FILE=$(python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["AUTOMATION_ROOT"])
+          requested_name = os.environ["NAME"]
+
+          matches = []
+
+          for definition in sorted(root.glob("*/definition.json")):
+              try:
+                  data = json.loads(definition.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  raise SystemExit(
+                      f"Invalid JSON in {definition}: {exc}"
+                  )
+
+              automation = data.get("automation") or {}
+
+              if automation.get("name") == requested_name:
+                  matches.append(definition)
+
+          if not matches:
+              raise SystemExit(
+                  "No approved Automation definition on main has exact "
+                  f"automation.name={requested_name!r}"
+              )
+
+          if len(matches) > 1:
+              raise SystemExit(
+                  "Multiple approved Automation definitions have exact "
+                  f"automation.name={requested_name!r}: "
+                  + ", ".join(str(path) for path in matches)
+              )
+
+          print(matches[0])
+          PY
+          )
+
+          [ -f "$FILE" ] || {
+            echo "::error::Resolved definition not found: $FILE"
+            exit 1
+          }
+
+          echo "Resolved approved Automation definition: $FILE"
           echo "definition=$FILE" >> "$GITHUB_OUTPUT"
           echo "production_mid=$MID" >> "$GITHUB_OUTPUT"
 
