@@ -1484,6 +1484,15 @@ jobs:
           ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
           SOAP_URL: ${{ steps.auth.outputs.soap_url }}
           PROGRAM_OBJECT_ID: ${{ steps.program_discovery.outputs.program_object_id }}
+
+          TASK_DESCRIBE_STATUS: ${{ steps.task_describe.outputs.describe_status }}
+          TASK_PROPERTY_COUNT: ${{ steps.task_describe.outputs.property_count }}
+          TASK_RETRIEVE_OUTCOME: ${{ steps.task_retrieve.outcome }}
+          TASK_DISCOVERY_STATUS: ${{ steps.task_retrieve.outputs.discovery_status }}
+          TASK_COUNT: ${{ steps.task_retrieve.outputs.task_count }}
+
+          ACTIVITY_DESCRIBE_STATUS: ${{ steps.activity_describe.outputs.describe_status }}
+          ACTIVITY_PROPERTY_COUNT: ${{ steps.activity_describe.outputs.property_count }}
         run: |
           set -euo pipefail
 
@@ -1799,7 +1808,197 @@ jobs:
 
 
       # ============================================================
-      # 12. BUILD DEFINITION
+      # 12. DESCRIBE ACTIVITY OBJECT
+      #
+      # Program -> Task is now live-proven.
+      # Before retrieving Activity, ask SFMC which Activity
+      # properties are actually retrievable/filterable in this BU.
+      #
+      # No Task -> Activity relationship is guessed here.
+      # ============================================================
+      - name: Describe SFMC Activity object
+        id: activity_describe
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+        run: |
+          set -euo pipefail
+
+          export ACCESS_TOKEN
+          export SOAP_URL
+
+          python3 <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+
+          body = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:et="http://exacttarget.com/wsdl/partnerAPI">
+
+            <soapenv:Header>
+              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
+            </soapenv:Header>
+
+            <soapenv:Body>
+              <et:DefinitionRequestMsg>
+                <et:DescribeRequests>
+                  <et:ObjectDefinitionRequest>
+                    <et:ObjectType>Activity</et:ObjectType>
+                  </et:ObjectDefinitionRequest>
+                </et:DescribeRequests>
+              </et:DefinitionRequestMsg>
+            </soapenv:Body>
+
+          </soapenv:Envelope>
+          """
+
+          request = urllib.request.Request(
+              soap_url + "/Service.asmx",
+              data=body.encode("utf-8"),
+              headers={
+                  "Content-Type": "text/xml; charset=UTF-8",
+                  "SOAPAction": "Describe"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(request) as response:
+                  xml_data = response.read()
+
+          except urllib.error.HTTPError as exc:
+              response_text = exc.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+              print(response_text)
+              raise SystemExit(
+                  f"Activity Describe HTTP {exc.code}"
+              )
+
+          with open(
+              "activity-describe-response.xml",
+              "wb"
+          ) as f:
+              f.write(xml_data)
+
+          root = ET.fromstring(xml_data)
+
+          overall = ""
+          request_id = ""
+          properties = []
+
+          for element in root.iter():
+
+              local = element.tag.split("}")[-1]
+
+              if local == "OverallStatus":
+                  overall = (
+                      element.text or ""
+                  ).strip()
+
+              elif local == "RequestID":
+                  request_id = (
+                      element.text or ""
+                  ).strip()
+
+              elif local == "Properties":
+
+                  prop = {}
+
+                  for child in list(element):
+                      key = child.tag.split("}")[-1]
+                      prop[key] = (
+                          child.text or ""
+                      ).strip()
+
+                  if prop.get("Name"):
+                      properties.append(prop)
+
+          retrievable = [
+              prop
+              for prop in properties
+              if prop.get(
+                  "IsRetrievable",
+                  ""
+              ).lower() == "true"
+          ]
+
+          print("")
+          print("============================================")
+          print("ACTIVITY OBJECT DESCRIBE")
+          print("============================================")
+          print("SOAP Status:", overall)
+          print("Properties returned:", len(properties))
+          print("Retrievable properties:", len(retrievable))
+          print("")
+
+          for prop in retrievable:
+              print(
+                  prop.get("Name", ""),
+                  "| Type:",
+                  prop.get("DataType", ""),
+                  "| Filterable:",
+                  prop.get("IsFilterable", "")
+              )
+
+          print("============================================")
+
+          result = {
+              "soapStatus": overall,
+              "requestId": request_id,
+              "objectType": "Activity",
+              "propertyCount": len(properties),
+              "retrievablePropertyCount": len(retrievable),
+              "retrievableProperties": retrievable
+          }
+
+          with open(
+              "activity-describe.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  result,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          # SFMC Describe can return useful properties with a blank
+          # OverallStatus, as already observed for Task Describe.
+          # The returned retrievable properties are the evidence.
+          if not retrievable:
+              raise SystemExit(
+                  "Activity Describe returned no retrievable properties."
+              )
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a"
+          ) as f:
+              f.write("describe_status=SUCCESS\n")
+              f.write(
+                  "property_count="
+                  + str(len(retrievable))
+                  + "\n"
+              )
+
+          print("")
+          print("RESULT: ACTIVITY SCHEMA DISCOVERED")
+          PY
+
+
+      # ============================================================
+      # 13. BUILD DEFINITION
       #
       # IMPORTANT:
       # Program discovery is recorded as discovery evidence only.
@@ -2129,7 +2328,7 @@ jobs:
 
 
       # ============================================================
-      # 13. SAVE RESULT
+      # 14. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -2193,6 +2392,16 @@ jobs:
               "$OUTPUT_DIR/task-retrieve-response.xml"
           fi
 
+          if [ -f activity-describe.json ]; then
+            cp activity-describe.json \
+              "$OUTPUT_DIR/activity-describe.json"
+          fi
+
+          if [ -f activity-describe-response.xml ]; then
+            cp activity-describe-response.xml \
+              "$OUTPUT_DIR/activity-describe-response.xml"
+          fi
+
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Saved to:"
@@ -2200,7 +2409,7 @@ jobs:
 
 
       # ============================================================
-      # 14. DISPLAY RESULT
+      # 15. DISPLAY RESULT
       # ============================================================
       - name: Display retrieved definition
         shell: bash
@@ -2260,9 +2469,20 @@ jobs:
               "$OUTPUT_DIR/task-discovery.json"
           fi
 
+          if [ -f "$OUTPUT_DIR/activity-describe.json" ]; then
+
+            echo ""
+            echo "============================================"
+            echo "ACTIVITY OBJECT DESCRIBE"
+            echo "============================================"
+
+            jq . \
+              "$OUTPUT_DIR/activity-describe.json"
+          fi
+
 
       # ============================================================
-      # 15. COMMIT
+      # 16. COMMIT
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -2296,7 +2516,7 @@ jobs:
 
 
       # ============================================================
-      # 16. FINAL RESULT
+      # 17. FINAL RESULT
       # ============================================================
       - name: Retrieval complete
         shell: bash
@@ -2387,6 +2607,14 @@ jobs:
           echo ""
           echo "Tasks returned:"
           echo "${TASK_COUNT:-0}"
+
+          echo ""
+          echo "Activity Describe status:"
+          echo "${ACTIVITY_DESCRIBE_STATUS:-[not available]}"
+
+          echo ""
+          echo "Activity retrievable properties:"
+          echo "${ACTIVITY_PROPERTY_COUNT:-0}"
 
           echo ""
           echo "IMPORTANT:"
