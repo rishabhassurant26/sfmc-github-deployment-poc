@@ -35,6 +35,11 @@
             "description": "E2E Query created from GitHub CI/CD",
             "queryText": "SELECT CustomerID, FirstName, Email, [Status] FROM [CICD_CUSTOMER_MASTER_DE2] WHERE [Status] = 'Active'",
             "targetType": "DE",
+            "targetDataExtension": {
+              "name": "GITHUB_E2E_TARGET_DE_32856624467_1",
+              "customerKey": "E2EDE_32856624467_1",
+              "description": ""
+            },
             "targetUpdateType": "Overwrite"
           }
         }
