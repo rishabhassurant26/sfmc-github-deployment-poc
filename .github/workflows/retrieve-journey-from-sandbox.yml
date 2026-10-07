@@ -321,6 +321,12 @@ jobs:
 
           triggers = journey.get("triggers") or []
           activities = journey.get("activities") or []
+
+          print("")
+          print("===== ACTUAL JOURNEY TRIGGER RESPONSE =====")
+          print(json.dumps(triggers, indent=2, ensure_ascii=False))
+          print("===========================================")
+
           if len(triggers) != 1:
               raise RuntimeError(
                   f"Expected exactly one Journey trigger; found {len(triggers)}."
