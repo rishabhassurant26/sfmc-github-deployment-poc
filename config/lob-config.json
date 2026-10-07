@@ -20,7 +20,7 @@
       "directory": "content-builder"
     },
     "automations": {
-      "enabled": false,
+      "enabled": true,
       "directory": "automations"
     }
   }
