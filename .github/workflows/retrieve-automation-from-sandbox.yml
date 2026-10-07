@@ -136,7 +136,7 @@ jobs:
 
 
       # ============================================================
-      # 5. AUTHENTICATE TO SANDBOX BU
+      # 5. AUTHENTICATE TO SANDBOX
       # ============================================================
       - name: Authenticate to SFMC Sandbox
         id: auth
@@ -187,16 +187,8 @@ jobs:
       # ============================================================
       # 6. RETRIEVE EXISTING AUTOMATION METADATA
       #
-      # ObjectID is NOT mandatory.
-      #
-      # Current live test proved:
-      # - Automation Name returned
-      # - CustomerKey returned
-      # - Status returned
-      # - ObjectID may be blank
-      #
-      # CustomerKey is therefore preserved as the required stable
-      # SFMC identity for this retrieval phase.
+      # ObjectID is optional.
+      # CustomerKey is required.
       # ============================================================
       - name: Retrieve existing Automation metadata
         id: automation
@@ -353,9 +345,8 @@ jobs:
 
           if len(exact) > 1:
               raise SystemExit(
-                  "More than one Automation matched the "
-                  "exact name. Retrieval stopped to avoid "
-                  "ambiguity."
+                  "More than one Automation matched the exact "
+                  "name. Retrieval stopped to avoid ambiguity."
               )
 
           automation = exact[0]
@@ -392,29 +383,24 @@ jobs:
           )
           print("============================================")
 
-          # CustomerKey is mandatory.
           if not customer_key:
               raise SystemExit(
                   "Automation was found but CustomerKey "
                   "was not returned."
               )
 
-          # ObjectID is NOT mandatory.
           if not object_id:
               print("")
               print(
                   "INFO: SFMC did not return ObjectID "
-                  "for this existing Automation."
+                  "for this Automation."
               )
               print(
-                  "Continuing with the SFMC-returned "
-                  "CustomerKey."
+                  "Continuing with SFMC-returned CustomerKey."
               )
 
-          output = os.environ["GITHUB_OUTPUT"]
-
           with open(
-              output,
+              os.environ["GITHUB_OUTPUT"],
               "a"
           ) as f:
               f.write(
@@ -446,10 +432,14 @@ jobs:
       # ============================================================
       # 7. RETRIEVE SANDBOX QUERY DEFINITIONS
       #
-      # No relationship is guessed here.
+      # IMPORTANT:
       #
-      # This step independently retrieves QueryDefinitions and their
-      # real SFMC metadata.
+      # DataExtensionTarget.* nested properties are deliberately
+      # NOT requested.
+      #
+      # Current SFMC live response proved that
+      # DataExtensionTarget.ObjectID does not match the fields
+      # available for QueryDefinition Retrieve.
       # ============================================================
       - name: Retrieve Sandbox QueryDefinitions
         id: queries
@@ -472,6 +462,8 @@ jobs:
           token = os.environ["ACCESS_TOKEN"]
           soap_url = os.environ["SOAP_URL"].rstrip("/")
 
+          # Only QueryDefinition properties accepted by this
+          # retrieval phase are requested here.
           properties = [
               "ObjectID",
               "CustomerKey",
@@ -480,9 +472,6 @@ jobs:
               "QueryText",
               "TargetType",
               "TargetUpdateType",
-              "DataExtensionTarget.ObjectID",
-              "DataExtensionTarget.CustomerKey",
-              "DataExtensionTarget.Name",
               "CreatedDate",
               "ModifiedDate"
           ]
@@ -553,7 +542,6 @@ jobs:
               )
 
               try:
-
                   with urllib.request.urlopen(
                       request
                   ) as response:
@@ -590,6 +578,8 @@ jobs:
               overall = ""
               request_id = ""
 
+              page_queries = []
+
               for element in root.iter():
 
                   local = element.tag.split("}")[-1]
@@ -612,40 +602,21 @@ jobs:
 
                           key = child.tag.split("}")[-1]
 
-                          if key == "DataExtensionTarget":
+                          current[key] = (
+                              child.text or ""
+                          ).strip()
 
-                              target = {}
-
-                              for nested in list(child):
-
-                                  nested_key = (
-                                      nested.tag
-                                      .split("}")[-1]
-                                  )
-
-                                  target[nested_key] = (
-                                      nested.text or ""
-                                  ).strip()
-
-                              current[
-                                  "DataExtensionTarget"
-                              ] = target
-
-                          else:
-
-                              current[key] = (
-                                  child.text or ""
-                              ).strip()
-
-                      # Keep QueryDefinitions that have a usable
-                      # SFMC identity.
                       if (
                           current.get("ObjectID")
                           or current.get("CustomerKey")
                       ):
-                          all_queries.append(
+                          page_queries.append(
                               current
                           )
+
+              all_queries.extend(
+                  page_queries
+              )
 
               if overall not in (
                   "OK",
@@ -656,6 +627,11 @@ jobs:
                       "status: "
                       + overall
                   )
+
+              print(
+                  "QueryDefinition page retrieved:",
+                  len(page_queries)
+              )
 
               if overall != "MoreDataAvailable":
                   break
@@ -701,22 +677,24 @@ jobs:
 
 
       # ============================================================
-      # 8. BUILD SAFE RETRIEVAL DEFINITION
+      # 8. BUILD SAFE AUTOMATION RETRIEVAL DEFINITION
       #
-      # Important:
-      # QueryDefinitions are discovered, but they are NOT attached
-      # to this Automation unless SFMC gives us relationship proof.
+      # We have:
+      # - real Automation metadata
+      # - real Automation CustomerKey
+      # - all retrievable QueryDefinitions
+      #
+      # But no Automation -> Query relationship is guessed.
       # ============================================================
       - name: Build Automation retrieval definition
         shell: bash
         env:
-          AUTOMATION_NAME: ${{ inputs.automation_name }}
           LOB: ${{ steps.config.outputs.lob }}
           SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
         run: |
           set -euo pipefail
 
-          export AUTOMATION_NAME LOB SANDBOX_MID
+          export LOB SANDBOX_MID
 
           python3 <<'PY'
           import os
@@ -735,21 +713,31 @@ jobs:
               queries = json.load(f)
 
           automation_object_id = (
-              automation.get("ObjectID", "")
+              automation.get(
+                  "ObjectID",
+                  ""
+              )
               or ""
           )
 
           automation_customer_key = (
-              automation.get("CustomerKey", "")
+              automation.get(
+                  "CustomerKey",
+                  ""
+              )
               or ""
           )
 
           definition = {
-              "schemaVersion": "1.0",
 
-              "assetType": "automation",
+              "schemaVersion":
+                  "1.0",
 
-              "environment": "sandbox",
+              "assetType":
+                  "automation",
+
+              "environment":
+                  "sandbox",
 
               "businessUnitMid":
                   os.environ["SANDBOX_MID"],
@@ -758,6 +746,7 @@ jobs:
                   os.environ["LOB"],
 
               "automation": {
+
                   "name":
                       automation.get(
                           "Name",
@@ -802,6 +791,7 @@ jobs:
               },
 
               "identity": {
+
                   "customerKeyResolved":
                       bool(
                           automation_customer_key
@@ -814,19 +804,20 @@ jobs:
               },
 
               "relationships": {
+
                   "status":
                       "UNRESOLVED",
 
                   "reason":
-                      "Automation metadata was retrieved "
-                      "successfully. QueryDefinitions were "
-                      "retrieved independently. No "
-                      "Automation-to-Query relationship is "
-                      "being guessed without SFMC-returned "
-                      "relationship evidence."
+                      "Automation metadata and "
+                      "QueryDefinitions were retrieved "
+                      "from SFMC independently. No "
+                      "Automation-to-Query relationship "
+                      "has been guessed."
               },
 
               "discovery": {
+
                   "queryDefinitionsRetrieved":
                       len(queries)
               }
@@ -837,6 +828,7 @@ jobs:
               "w",
               encoding="utf-8"
           ) as f:
+
               json.dump(
                   definition,
                   f,
@@ -872,7 +864,7 @@ jobs:
           )
 
           print(
-              "QueryDefinitions discovered:",
+              "QueryDefinitions retrieved:",
               len(queries)
           )
 
@@ -888,7 +880,7 @@ jobs:
 
 
       # ============================================================
-      # 9. CREATE CONFIG-DRIVEN OUTPUT DIRECTORY
+      # 9. SAVE TO CONFIG-DRIVEN ASSET PATH
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -940,7 +932,7 @@ jobs:
 
 
       # ============================================================
-      # 11. COMMIT ONLY WHEN SOMETHING CHANGED
+      # 11. COMMIT RETRIEVED AUTOMATION
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -961,6 +953,7 @@ jobs:
           git add "$OUTPUT_DIR"
 
           if git diff --cached --quiet; then
+            echo ""
             echo "No Automation metadata changes detected."
             exit 0
           fi
@@ -1002,6 +995,7 @@ jobs:
 
           echo ""
           echo "ObjectID:"
+
           if [ -n "$AUTOMATION_OBJECT_ID" ]; then
             echo "$AUTOMATION_OBJECT_ID"
           else
@@ -1021,6 +1015,9 @@ jobs:
           else
             echo "Automation ObjectID returned: NO"
           fi
+
+          echo ""
+          echo "QueryDefinition retrieval: SUCCESS"
 
           echo ""
           echo "Task/activity relationship:"
