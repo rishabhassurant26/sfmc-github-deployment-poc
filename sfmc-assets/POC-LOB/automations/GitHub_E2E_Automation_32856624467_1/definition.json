@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0",
+  "assetType": "automation",
+  "environment": "sandbox",
+  "businessUnitMid": "524002130",
+  "lineOfBusiness": "POC-LOB",
+  "automation": {
+    "name": "GitHub E2E Automation 32856624467_1",
+    "customerKey": "E2EA_32856624467_1",
+    "objectId": "",
+    "description": "E2E Automation created through GitHub CI/CD",
+    "status": "2",
+    "isActive": "true",
+    "createdDate": "2026-08-25T07:58:57.6",
+    "modifiedDate": "2026-08-25T07:59:05.517"
+  },
+  "identity": {
+    "customerKeyResolved": true,
+    "objectIdReturned": false
+  },
+  "relationships": {
+    "status": "UNRESOLVED",
+    "reason": "Automation metadata and QueryDefinitions were retrieved from SFMC independently. No Automation-to-Query relationship has been guessed."
+  },
+  "discovery": {
+    "queryDefinitionsRetrieved": 21
+  }
+}
