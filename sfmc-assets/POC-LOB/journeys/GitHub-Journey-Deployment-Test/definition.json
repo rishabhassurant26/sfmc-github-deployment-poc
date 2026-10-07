@@ -1,0 +1,439 @@
+{
+  "schemaVersion": "1.0",
+  "assetType": "journey",
+  "lineOfBusiness": "POC-LOB",
+  "journey": {
+    "name": "GitHub Journey Deployment Test",
+    "key": "e63339e6-5c93-2b08-e013-e784c1ccc745",
+    "description": "",
+    "workflowApiVersion": 1.0,
+    "source": {
+      "id": "dab60a45-f8d3-4e13-8c8e-da92325eb51b",
+      "version": 1,
+      "status": "Draft"
+    },
+    "defaults": {
+      "email": [
+        "{{Event.DEAudience-b316fd8b-1685-925d-3652-84cf67ce60b6.\"Email\"}}"
+      ],
+      "properties": {
+        "analyticsTracking": {
+          "enabled": false,
+          "analyticsType": "google",
+          "urlDomainsToTrack": []
+        }
+      }
+    },
+    "triggers": [
+      {
+        "id": "35df7a92-9b81-42fb-aac3-62711a4eb5df",
+        "key": "TRIGGER",
+        "name": "TRIGGER",
+        "description": "",
+        "type": "EmailAudience",
+        "outcomes": [],
+        "arguments": {},
+        "configurationArguments": {},
+        "metaData": {
+          "eventDefinitionId": "ab451617-f6e6-4c15-b759-7770f35b4992",
+          "eventDefinitionKey": "DEAudience-b316fd8b-1685-925d-3652-84cf67ce60b6",
+          "chainType": "None",
+          "configurationRequired": false,
+          "iconUrl": "/images/icon-data-extension.svg",
+          "title": "Data Extension",
+          "entrySourceGroupConfigUrl": "jb:///data/entry/audience/entrysourcegroupconfig.json",
+          "sourceInteractionId": "00000000-0000-0000-0000-000000000000"
+        }
+      }
+    ],
+    "activities": [
+      {
+        "id": "4b3633df-98f6-446e-a33d-4e62f7f26704",
+        "key": "WAITBYDURATION-1",
+        "name": "",
+        "description": "",
+        "type": "WAIT",
+        "outcomes": [
+          {
+            "key": "3a71c0a8-ce77-4608-9cf3-b923338582ff",
+            "next": "MULTICRITERIADECISIONV2-1",
+            "arguments": {},
+            "metaData": {
+              "invalid": false
+            }
+          }
+        ],
+        "arguments": {},
+        "configurationArguments": {
+          "waitDuration": 1,
+          "waitUnit": "DAYS"
+        },
+        "metaData": {
+          "icon": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "iconSmall": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "category": "flow",
+          "isConfigured": true,
+          "original_icon": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "original_iconSmall": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "uiType": "WAITBYDURATION"
+        },
+        "schema": {
+          "arguments": {
+            "endDate": {
+              "dataType": "Date",
+              "isNullable": false,
+              "direction": "Out",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitEndDateAttributeDataBound": {
+              "dataType": "Text",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitDefinitionId": {
+              "dataType": "Text",
+              "isNullable": false,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitForEventId": {
+              "dataType": "Text",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "executionMode": {
+              "dataType": "Text",
+              "isNullable": false,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "startActivityKey": {
+              "dataType": "Text",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitQueueId": {
+              "dataType": "LongNumber",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            }
+          }
+        }
+      },
+      {
+        "id": "ddba40c3-1823-41cc-bdeb-40a928cce56b",
+        "key": "MULTICRITERIADECISIONV2-1",
+        "name": "",
+        "description": "",
+        "type": "MULTICRITERIADECISION",
+        "outcomes": [
+          {
+            "key": "default_path_1",
+            "next": "WAITBYDURATION-2",
+            "arguments": {},
+            "metaData": {
+              "label": "India",
+              "skipI18n": true,
+              "isLabelFromConversion": false,
+              "criteriaDescription": "Country equal India"
+            }
+          },
+          {
+            "key": "remainder_path",
+            "next": "WAITBYDURATION-3",
+            "arguments": {},
+            "metaData": {
+              "label": null
+            }
+          }
+        ],
+        "arguments": {},
+        "configurationArguments": {
+          "criteria": {
+            "default_path_1": "<FilterDefinition><ConditionSet Operator=\"AND\" ConditionSetName=\"Individual Filter Grouping\"><Condition IsEphemeralAttribute=\"true\" Key=\"Event.DEAudience-b316fd8b-1685-925d-3652-84cf67ce60b6.Country\" Operator=\"Equal\" UiMetaData=\"{}\"><Value><![CDATA[India]]></Value></Condition></ConditionSet></FilterDefinition>"
+          },
+          "schemaVersionId": "252"
+        },
+        "metaData": {
+          "isConfigured": true
+        },
+        "schema": {
+          "arguments": {
+            "actualChoice": {
+              "dataType": "Number",
+              "isNullable": false,
+              "direction": "Out",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "filterResult": {
+              "dataType": "Text",
+              "isNullable": false,
+              "direction": "In",
+              "readOnly": true,
+              "access": "Hidden"
+            }
+          }
+        }
+      },
+      {
+        "id": "c0eb9386-60fa-4241-b26a-4ba5fdc8ab30",
+        "key": "WAITBYDURATION-2",
+        "name": "",
+        "description": "",
+        "type": "WAIT",
+        "outcomes": [
+          {
+            "key": "77bb9434-9851-4523-b0d3-ebe5647d8104",
+            "arguments": {},
+            "metaData": {
+              "invalid": false
+            }
+          }
+        ],
+        "arguments": {},
+        "configurationArguments": {
+          "waitDuration": 1,
+          "waitUnit": "DAYS"
+        },
+        "metaData": {
+          "icon": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "iconSmall": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "category": "flow",
+          "isConfigured": true,
+          "original_icon": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "original_iconSmall": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "uiType": "WAITBYDURATION"
+        },
+        "schema": {
+          "arguments": {
+            "endDate": {
+              "dataType": "Date",
+              "isNullable": false,
+              "direction": "Out",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitEndDateAttributeDataBound": {
+              "dataType": "Text",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitDefinitionId": {
+              "dataType": "Text",
+              "isNullable": false,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitForEventId": {
+              "dataType": "Text",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "executionMode": {
+              "dataType": "Text",
+              "isNullable": false,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "startActivityKey": {
+              "dataType": "Text",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitQueueId": {
+              "dataType": "LongNumber",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            }
+          }
+        }
+      },
+      {
+        "id": "56b035da-300f-4f14-9543-7fc6d9833d4a",
+        "key": "WAITBYDURATION-3",
+        "name": "",
+        "description": "",
+        "type": "WAIT",
+        "outcomes": [
+          {
+            "key": "1fe4af1d-6b1c-4b22-948a-2bd7812b816a",
+            "arguments": {},
+            "metaData": {
+              "invalid": false
+            }
+          }
+        ],
+        "arguments": {},
+        "configurationArguments": {
+          "waitDuration": 1,
+          "waitUnit": "DAYS"
+        },
+        "metaData": {
+          "icon": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "iconSmall": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "category": "flow",
+          "isConfigured": true,
+          "original_icon": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "original_iconSmall": "/extensions/activities/wait-by-duration/images/icon.svg",
+          "uiType": "WAITBYDURATION"
+        },
+        "schema": {
+          "arguments": {
+            "endDate": {
+              "dataType": "Date",
+              "isNullable": false,
+              "direction": "Out",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitEndDateAttributeDataBound": {
+              "dataType": "Text",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitDefinitionId": {
+              "dataType": "Text",
+              "isNullable": false,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitForEventId": {
+              "dataType": "Text",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "executionMode": {
+              "dataType": "Text",
+              "isNullable": false,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "startActivityKey": {
+              "dataType": "Text",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            },
+            "waitQueueId": {
+              "dataType": "LongNumber",
+              "isNullable": true,
+              "direction": "In",
+              "readOnly": false,
+              "access": "Hidden"
+            }
+          }
+        }
+      }
+    ],
+    "goals": []
+  },
+  "entryEventDefinition": {
+    "id": "ab451617-f6e6-4c15-b759-7770f35b4992",
+    "eventDefinitionKey": "DEAudience-b316fd8b-1685-925d-3652-84cf67ce60b6",
+    "name": "GitHub Journey Deployment Test",
+    "description": "",
+    "type": "EmailAudience",
+    "mode": "Production",
+    "sourceApplicationExtensionId": "a62ff9df-dc1c-4e9a-87cd-c05841d79f38",
+    "dataExtensionId": "985a8168-7cc2-f111-a5f6-5cba2c6fdf38",
+    "dataExtensionName": "Journey_Entry_Source_Test"
+  },
+  "dependencies": {
+    "entryDataExtension": {
+      "objectId": "985a8168-7cc2-f111-a5f6-5cba2c6fdf38",
+      "customerKey": "Journey_Entry_Source_Test",
+      "name": "Journey_Entry_Source_Test",
+      "description": "GitHub CICD Journey Builder entry source test",
+      "isSendable": true,
+      "isTestable": true,
+      "sendableDataExtensionField": "ContactKey",
+      "sendableSubscriberField": "_SubscriberKey",
+      "fields": [
+        {
+          "objectId": "9f84d5ff-1bbf-4ea9-ac0d-3a135ee37cf0",
+          "customerKey": "[Journey_Entry_Source_Test].[ContactKey]",
+          "name": "ContactKey",
+          "fieldType": "Text",
+          "maxLength": 50,
+          "isPrimaryKey": true,
+          "isRequired": true,
+          "defaultValue": "",
+          "ordinal": 0,
+          "scale": 0
+        },
+        {
+          "objectId": "047bec96-d50b-4014-8904-bcd19ac36c13",
+          "customerKey": "[Journey_Entry_Source_Test].[FirstName]",
+          "name": "FirstName",
+          "fieldType": "Text",
+          "maxLength": 50,
+          "isPrimaryKey": false,
+          "isRequired": false,
+          "defaultValue": "",
+          "ordinal": 1,
+          "scale": 0
+        },
+        {
+          "objectId": "d73e7836-69ab-480c-8452-61e1767c67b6",
+          "customerKey": "[Journey_Entry_Source_Test].[Email]",
+          "name": "Email",
+          "fieldType": "EmailAddress",
+          "maxLength": 254,
+          "isPrimaryKey": false,
+          "isRequired": false,
+          "defaultValue": "",
+          "ordinal": 2,
+          "scale": 0
+        },
+        {
+          "objectId": "6d94700e-a7df-4049-81bf-04d9643bcf2f",
+          "customerKey": "[Journey_Entry_Source_Test].[Country]",
+          "name": "Country",
+          "fieldType": "Text",
+          "maxLength": 50,
+          "isPrimaryKey": false,
+          "isRequired": false,
+          "defaultValue": "",
+          "ordinal": 3,
+          "scale": 0
+        }
+      ]
+    }
+  },
+  "deploymentPolicy": {
+    "deployStructure": true,
+    "deployEntryDataExtension": true,
+    "deployDataRows": false,
+    "publishJourney": false,
+    "activateJourney": false
+  }
+}
