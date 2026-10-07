@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.3",
+  "schemaVersion": "2.0",
   "assetType": "automation",
   "environment": "sandbox",
   "businessUnitMid": "524002130",
@@ -7,32 +7,49 @@
   "automation": {
     "name": "GitHub E2E Automation 32856624467_1",
     "customerKey": "E2EA_32856624467_1",
-    "objectId": "",
     "description": "E2E Automation created through GitHub CI/CD",
-    "status": "2",
-    "isActive": "true",
-    "createdDate": "2026-08-25T07:58:57.6",
-    "modifiedDate": "2026-08-25T07:59:05.517"
+    "automationType": "scheduled",
+    "source": {
+      "automationSourceId": "",
+      "automationSourceType": ""
+    }
   },
-  "identity": {
-    "customerKeyResolved": true,
-    "objectIdReturned": false,
-    "preservedCreateObjectId": "6d9e9be9-77a5-4ea5-931b-dad614ff9769",
-    "preservedObjectIdIdentityProven": false,
-    "preservedObjectIdProbeOutcome": "failure"
+  "program": {
+    "sourceObjectId": "6d9e9be9-77a5-4ea5-931b-dad614ff9769"
   },
-  "programDiscovery": {
-    "stepOutcome": "success",
-    "status": "PROGRAM_RESOLVED",
-    "programResolved": true,
-    "programCount": 1,
-    "programObjectId": "6d9e9be9-77a5-4ea5-931b-dad614ff9769"
+  "tasks": [
+    {
+      "sequence": 0,
+      "name": "Step 1 - Active Customer Query",
+      "description": "",
+      "activities": [
+        {
+          "sequence": 0,
+          "name": "GitHub E2E Active Query 32856624467_1",
+          "customerKey": "E2EACT_32856624467_1",
+          "activityTypeId": "",
+          "definition": {
+            "type": "QueryDefinition",
+            "name": "GitHub E2E Active Query 32856624467_1",
+            "customerKey": "E2EQ_32856624467_1",
+            "description": "E2E Query created from GitHub CI/CD",
+            "queryText": "SELECT CustomerID, FirstName, Email, [Status] FROM [CICD_CUSTOMER_MASTER_DE2] WHERE [Status] = 'Active'",
+            "targetType": "DE",
+            "targetUpdateType": "Overwrite"
+          }
+        }
+      ]
+    }
+  ],
+  "schedule": {
+    "deploymentMode": "manual",
+    "activateAfterDeployment": false,
+    "reason": "Automation structure is version-controlled and deployed by CI/CD; Production schedule/activation is configured manually after deployment."
   },
-  "discovery": {
-    "queryDefinitionsRetrieved": 21
-  },
-  "relationships": {
-    "status": "UNRESOLVED",
-    "reason": "SFMC returned a Program matching the retrieved Automation CustomerKey. Program identity is resolved, but no Program -> Task -> Activity -> Query relationship has yet been retrieved."
+  "deploymentPolicy": {
+    "deployStructure": true,
+    "deploySchedule": false,
+    "activateAutomation": false,
+    "runAutomation": false
   }
 }
