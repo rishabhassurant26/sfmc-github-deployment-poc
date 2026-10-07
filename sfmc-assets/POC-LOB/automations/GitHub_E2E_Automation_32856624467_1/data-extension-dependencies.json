@@ -1,0 +1,24 @@
+[
+  {
+    "customerKey": "CICD_CUSTOMER_MASTER_DE2",
+    "name": "CICD_CUSTOMER_MASTER_DE2",
+    "roles": [
+      "source"
+    ],
+    "queryDefinitions": [
+      "E2EQ_32856624467_1"
+    ],
+    "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/CICD_CUSTOMER_MASTER_DE2/definition.json"
+  },
+  {
+    "customerKey": "E2EDE_32856624467_1",
+    "name": "GITHUB_E2E_TARGET_DE_32856624467_1",
+    "roles": [
+      "target"
+    ],
+    "queryDefinitions": [
+      "E2EQ_32856624467_1"
+    ],
+    "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/E2EDE_32856624467_1/definition.json"
+  }
+]
