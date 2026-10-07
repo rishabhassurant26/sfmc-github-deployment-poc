@@ -569,8 +569,13 @@ jobs:
           PY
 
 
-          # ============================================================
-      # 8. PROVE API IDENTITY USING PRESERVED NEWOBJECTID
+      # ============================================================
+      # 8. PRESERVED NEWOBJECTID PROBE
+      #
+      # Diagnostic only.
+      # Previous live result:
+      # SOAP accepted request but returned zero Automation objects.
+      # Therefore this step must not block the retrieval pipeline.
       # ============================================================
       - name: Probe Automation identity using preserved NewObjectID
         id: objectid_proof
@@ -581,8 +586,10 @@ jobs:
           SOAP_URL: ${{ steps.auth.outputs.soap_url }}
           EXPECTED_AUTOMATION_NAME: ${{ inputs.automation_name }}
           EXPECTED_CUSTOMER_KEY: ${{ steps.automation.outputs.customer_key }}
+
+          # Temporary POC evidence from original SOAP Create response.
+          # NOT part of the final generic architecture.
           KNOWN_AUTOMATION_OBJECT_ID: "6d9e9be9-77a5-4ea5-931b-dad614ff9769"
-          EXPECTED_QUERY_OBJECT_ID: "42c239b1-af53-4d13-80ce-7ae7fd9937ec"
 
         run: |
           set -euo pipefail
@@ -592,7 +599,6 @@ jobs:
           export EXPECTED_AUTOMATION_NAME
           export EXPECTED_CUSTOMER_KEY
           export KNOWN_AUTOMATION_OBJECT_ID
-          export EXPECTED_QUERY_OBJECT_ID
 
           python3 <<'PY'
           import os
@@ -607,7 +613,6 @@ jobs:
           expected_name = os.environ["EXPECTED_AUTOMATION_NAME"]
           expected_customer_key = os.environ["EXPECTED_CUSTOMER_KEY"]
           known_object_id = os.environ["KNOWN_AUTOMATION_OBJECT_ID"]
-          expected_query_object_id = os.environ["EXPECTED_QUERY_OBJECT_ID"]
 
           def esc(value):
               return html.escape(value or "", quote=True)
@@ -676,12 +681,6 @@ jobs:
                   f"Automation ObjectID Retrieve HTTP {exc.code}"
               )
 
-          with open(
-              "automation-objectid-response.xml",
-              "wb"
-          ) as f:
-              f.write(xml_data)
-
           root = ET.fromstring(xml_data)
 
           overall = ""
@@ -713,96 +712,116 @@ jobs:
 
           print("")
           print("============================================")
-          print("AUTOMATION PRESERVED NEWOBJECTID PROOF")
+          print("AUTOMATION PRESERVED NEWOBJECTID PROBE")
           print("============================================")
           print("SOAP Status:", overall)
           print("Requested ObjectID:", known_object_id)
+          print("Results returned:", len(results))
+          print("============================================")
+
+          proof = {
+              "status": "",
+              "soapStatus": overall,
+              "requestedObjectId": known_object_id,
+              "expectedAutomation": {
+                  "name": expected_name,
+                  "customerKey": expected_customer_key
+              },
+              "resultsReturned": len(results),
+              "results": results
+          }
 
           if overall not in (
               "OK",
               "MoreDataAvailable"
           ):
+
+              proof["status"] = "SOAP_ERROR"
+
+              with open(
+                  "automation-objectid-proof.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      proof,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
               raise SystemExit(
-                  "Automation ObjectID Retrieve returned: "
+                  "Automation ObjectID probe returned: "
                   + overall
               )
 
-          if len(results) != 1:
-              raise SystemExit(
-                  "Expected exactly one Automation for "
-                  "the preserved NewObjectID; SFMC "
-                  f"returned {len(results)}."
-              )
+          if len(results) == 0:
 
-          automation = results[0]
+              proof["status"] = "NOT_RESOLVED"
 
-          returned_name = automation.get("Name", "")
-          returned_customer_key = automation.get(
-              "CustomerKey",
-              ""
-          )
-          returned_object_id = automation.get(
-              "ObjectID",
-              ""
-          )
-
-          print("Returned Name:", returned_name)
-          print(
-              "Returned CustomerKey:",
-              returned_customer_key
-          )
-          print(
-              "Returned ObjectID:",
-              returned_object_id or "[not returned]"
-          )
-
-          if returned_name != expected_name:
-              raise SystemExit(
-                  "ObjectID resolved to a different "
-                  "Automation name."
-              )
-
-          if returned_customer_key != expected_customer_key:
-              raise SystemExit(
-                  "ObjectID resolved to a different "
-                  "Automation CustomerKey."
-              )
-
-          proof = {
-              "status": "IDENTITY_PROVEN",
-
-              "requestedObjectId":
-                  known_object_id,
-
-              "expectedAutomation": {
-                  "name":
-                      expected_name,
-
-                  "customerKey":
-                      expected_customer_key
-              },
-
-              "returnedAutomation":
-                  automation,
-
-              "expectedQueryEvidence": {
-                  "objectId":
-                      expected_query_object_id,
-
-                  "relationshipStatus":
-                      "NOT_YET_PROVEN"
-              },
-
-              "conclusion":
-                  (
-                      "The preserved SOAP Create "
-                      "NewObjectID resolved to the same "
-                      "Automation independently retrieved "
-                      "by Name and CustomerKey. "
-                      "No task/query relationship has "
-                      "been inferred."
+              with open(
+                  "automation-objectid-proof.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      proof,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
                   )
-          }
+
+              with open(
+                  os.environ["GITHUB_OUTPUT"],
+                  "a"
+              ) as f:
+                  f.write("identity_proven=false\n")
+                  f.write(
+                      "known_object_id="
+                      + known_object_id
+                      + "\n"
+                  )
+
+              print(
+                  "Preserved NewObjectID was not resolved "
+                  "by Automation ObjectID Retrieve."
+              )
+
+              raise SystemExit(1)
+
+          exact = [
+              item
+              for item in results
+              if (
+                  item.get("Name") == expected_name
+                  and item.get("CustomerKey")
+                      == expected_customer_key
+              )
+          ]
+
+          if len(exact) != 1:
+
+              proof["status"] = "IDENTITY_NOT_PROVEN"
+
+              with open(
+                  "automation-objectid-proof.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      proof,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              raise SystemExit(
+                  "ObjectID probe did not resolve uniquely "
+                  "to the expected Automation."
+              )
+
+          proof["status"] = "IDENTITY_PROVEN"
+          proof["returnedAutomation"] = exact[0]
 
           with open(
               "automation-objectid-proof.json",
@@ -827,60 +846,62 @@ jobs:
                   + "\n"
               )
 
-          print("")
           print("RESULT: AUTOMATION API IDENTITY PROVEN")
-          print(
-              "ObjectID -> Name -> CustomerKey "
-              "cross-check passed."
-          )
-          print(
-              "No Automation-to-Task or "
-              "Automation-to-Query relationship "
-              "has been guessed."
-          )
-          print("============================================")
-
           PY
 
+
       # ============================================================
-      # 9. ISOLATED AUTOMATIONTASK DISCOVERY
+      # 9. PROGRAM DISCOVERY
       #
-      # Existing discovery logic retained.
-      # No generated task/query naming relationship is assumed.
+      # Official Installed Package SOAP access documentation:
+      # Program = automation definition.
+      #
+      # This is an isolated discovery probe.
+      # No Task/Activity relationship is inferred yet.
       # ============================================================
-      - name: Discover AutomationTask relationship
-        id: task_discovery
+      - name: Discover Automation definition through Program
+        id: program_discovery
         continue-on-error: true
         shell: bash
         env:
           ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
           SOAP_URL: ${{ steps.auth.outputs.soap_url }}
           AUTOMATION_CUSTOMER_KEY: ${{ steps.automation.outputs.customer_key }}
+          AUTOMATION_NAME: ${{ inputs.automation_name }}
+
         run: |
           set -euo pipefail
 
-          export ACCESS_TOKEN SOAP_URL AUTOMATION_CUSTOMER_KEY
+          export ACCESS_TOKEN
+          export SOAP_URL
+          export AUTOMATION_CUSTOMER_KEY
+          export AUTOMATION_NAME
 
           python3 <<'PY'
           import os
           import json
+          import html
           import urllib.request
           import urllib.error
           import xml.etree.ElementTree as ET
 
           token = os.environ["ACCESS_TOKEN"]
           soap_url = os.environ["SOAP_URL"].rstrip("/")
-          automation_key = os.environ["AUTOMATION_CUSTOMER_KEY"]
+          customer_key = os.environ["AUTOMATION_CUSTOMER_KEY"]
+          automation_name = os.environ["AUTOMATION_NAME"]
 
-          # Do not infer ${automation_key}_TASK.
-          # Retrieve actual AutomationTask objects exposed by SFMC.
+          def esc(value):
+              return html.escape(value or "", quote=True)
 
           properties = [
               "ObjectID",
               "CustomerKey",
               "Name",
-              "Sequence",
-              "AutomationTaskType"
+              "Description",
+              "Status",
+              "IsActive",
+              "CreatedDate",
+              "ModifiedDate"
           ]
 
           props = "\n".join(
@@ -891,28 +912,29 @@ jobs:
           body = f"""<?xml version="1.0" encoding="UTF-8"?>
           <soapenv:Envelope
             xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-            xmlns:et="http://exacttarget.com/wsdl/partnerAPI">
+            xmlns:et="http://exacttarget.com/wsdl/partnerAPI"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
             <soapenv:Header>
               <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
             </soapenv:Header>
 
             <soapenv:Body>
-
               <et:RetrieveRequestMsg>
-
                 <et:RetrieveRequest>
 
-                  <et:ObjectType>
-                    AutomationTask
-                  </et:ObjectType>
+                  <et:ObjectType>Program</et:ObjectType>
 
                   {props}
 
+                  <et:Filter xsi:type="et:SimpleFilterPart">
+                    <et:Property>CustomerKey</et:Property>
+                    <et:SimpleOperator>equals</et:SimpleOperator>
+                    <et:Value>{esc(customer_key)}</et:Value>
+                  </et:Filter>
+
                 </et:RetrieveRequest>
-
               </et:RetrieveRequestMsg>
-
             </soapenv:Body>
 
           </soapenv:Envelope>
@@ -935,6 +957,7 @@ jobs:
               with urllib.request.urlopen(
                   request
               ) as response:
+
                   xml_data = response.read()
 
           except urllib.error.HTTPError as exc:
@@ -947,113 +970,342 @@ jobs:
               print(response_text)
 
               raise SystemExit(
-                  f"AutomationTask Retrieve HTTP "
-                  f"{exc.code}"
+                  f"Program Retrieve HTTP {exc.code}"
               )
+
+          with open(
+              "program-retrieve-response.xml",
+              "wb"
+          ) as f:
+              f.write(xml_data)
 
           root = ET.fromstring(xml_data)
 
           overall = ""
-          tasks = []
+          request_id = ""
+          results = []
 
           for element in root.iter():
 
               local = element.tag.split("}")[-1]
 
               if local == "OverallStatus":
+
                   overall = (
+                      element.text or ""
+                  ).strip()
+
+              elif local == "RequestID":
+
+                  request_id = (
                       element.text or ""
                   ).strip()
 
               elif local == "Results":
 
-                  task = {}
+                  current = {}
 
                   for child in list(element):
 
                       key = child.tag.split("}")[-1]
 
-                      task[key] = (
-                          child.text or ""
-                      ).strip()
+                      if len(list(child)) == 0:
 
-                  if task:
-                      tasks.append(task)
+                          current[key] = (
+                              child.text or ""
+                          ).strip()
+
+                  if current:
+                      results.append(current)
 
           print("")
           print("============================================")
-          print("AUTOMATION TASK DISCOVERY")
+          print("PROGRAM DISCOVERY")
           print("============================================")
           print("SOAP Status:", overall)
-          print("Tasks returned:", len(tasks))
+          print("CustomerKey:", customer_key)
+          print("Results returned:", len(results))
           print("============================================")
 
+          if overall not in (
+              "OK",
+              "MoreDataAvailable"
+          ):
+
+              result = {
+                  "status":
+                      "SOAP_ERROR",
+
+                  "soapStatus":
+                      overall,
+
+                  "customerKey":
+                      customer_key,
+
+                  "requestId":
+                      request_id,
+
+                  "results":
+                      results
+              }
+
+              with open(
+                  "program-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              with open(
+                  os.environ["GITHUB_OUTPUT"],
+                  "a"
+              ) as f:
+
+                  f.write(
+                      "discovery_status=SOAP_ERROR\n"
+                  )
+
+                  f.write(
+                      "program_count=0\n"
+                  )
+
+              print("")
+              print(
+                  "Program Retrieve was not accepted "
+                  "successfully by SFMC."
+              )
+
+              raise SystemExit(1)
+
+          exact = [
+              item
+              for item in results
+              if item.get("CustomerKey") == customer_key
+          ]
+
+          if len(exact) == 0:
+
+              result = {
+                  "status":
+                      "NOT_RETURNED",
+
+                  "soapStatus":
+                      overall,
+
+                  "customerKey":
+                      customer_key,
+
+                  "requestId":
+                      request_id,
+
+                  "results":
+                      results
+              }
+
+              with open(
+                  "program-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              with open(
+                  os.environ["GITHUB_OUTPUT"],
+                  "a"
+              ) as f:
+
+                  f.write(
+                      "discovery_status=NOT_RETURNED\n"
+                  )
+
+                  f.write(
+                      "program_count=0\n"
+                  )
+
+              print("")
+              print(
+                  "SFMC accepted Program Retrieve, "
+                  "but no matching Program was returned."
+              )
+
+              raise SystemExit(1)
+
+          if len(exact) > 1:
+
+              raise SystemExit(
+                  "More than one Program returned for "
+                  "the Automation CustomerKey."
+              )
+
+          program = exact[0]
+
+          returned_name = program.get(
+              "Name",
+              ""
+          )
+
+          returned_key = program.get(
+              "CustomerKey",
+              ""
+          )
+
+          returned_object_id = program.get(
+              "ObjectID",
+              ""
+          )
+
+          print("")
+          print("PROGRAM FOUND")
+          print("Name:", returned_name)
+          print("CustomerKey:", returned_key)
+          print(
+              "ObjectID:",
+              returned_object_id
+              or "[not returned]"
+          )
+
+          if returned_key != customer_key:
+
+              raise SystemExit(
+                  "Program CustomerKey does not match "
+                  "the retrieved Automation."
+              )
+
+          if (
+              returned_name
+              and returned_name != automation_name
+          ):
+
+              raise SystemExit(
+                  "Program resolved to a different "
+                  "Automation name."
+              )
+
+          result = {
+              "status":
+                  "PROGRAM_RESOLVED",
+
+              "soapStatus":
+                  overall,
+
+              "automation": {
+                  "name":
+                      automation_name,
+
+                  "customerKey":
+                      customer_key
+              },
+
+              "program":
+                  program,
+
+              "relationshipStatus":
+                  "PROGRAM_IDENTITY_ONLY",
+
+              "relationshipReason":
+                  (
+                      "SFMC returned a Program matching "
+                      "the existing Automation CustomerKey. "
+                      "Task and Activity relationships "
+                      "have not yet been inferred."
+                  )
+          }
+
           with open(
-              "automation-tasks.json",
+              "program-discovery.json",
               "w",
               encoding="utf-8"
           ) as f:
+
               json.dump(
-                  tasks,
+                  result,
                   f,
                   indent=2,
                   ensure_ascii=False
               )
 
-          status = (
-              "DISCOVERED"
-              if tasks
-              else "NOT_RETURNED"
-          )
-
           with open(
               os.environ["GITHUB_OUTPUT"],
               "a"
           ) as f:
+
               f.write(
-                  f"relationship_status={status}\n"
-              )
-              f.write(
-                  f"task_count={len(tasks)}\n"
+                  "discovery_status=PROGRAM_RESOLVED\n"
               )
 
-          if tasks:
-              print("")
-              print(
-                  "AutomationTask objects were returned "
-                  "by SFMC."
+              f.write(
+                  "program_count=1\n"
               )
-              print(
-                  "No task has been assigned to the "
-                  "Automation without relationship proof."
+
+              f.write(
+                  "program_object_id="
+                  + returned_object_id
+                  + "\n"
               )
-          else:
-              print(
-                  "SFMC returned no AutomationTask "
-                  "objects."
-              )
+
+          print("")
+          print("RESULT: PROGRAM RESOLVED")
+          print(
+              "Automation CustomerKey -> Program "
+              "cross-check passed."
+          )
+          print(
+              "No Task or Activity relationship "
+              "has been guessed."
+          )
+          print("============================================")
+
           PY
 
 
       # ============================================================
       # 10. BUILD DEFINITION
+      #
+      # IMPORTANT:
+      # Program discovery is recorded as discovery evidence only.
+      # It is NOT yet treated as Task/Activity relationship proof.
       # ============================================================
       - name: Build Automation retrieval definition
         shell: bash
         env:
           LOB: ${{ steps.config.outputs.lob }}
           SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
-          TASK_STEP_OUTCOME: ${{ steps.task_discovery.outcome }}
+
+          OBJECTID_STEP_OUTCOME: ${{ steps.objectid_proof.outcome }}
           OBJECTID_IDENTITY_PROVEN: ${{ steps.objectid_proof.outputs.identity_proven }}
           PRESERVED_OBJECT_ID: ${{ steps.objectid_proof.outputs.known_object_id }}
+
+          PROGRAM_STEP_OUTCOME: ${{ steps.program_discovery.outcome }}
+          PROGRAM_DISCOVERY_STATUS: ${{ steps.program_discovery.outputs.discovery_status }}
+          PROGRAM_OBJECT_ID: ${{ steps.program_discovery.outputs.program_object_id }}
+          PROGRAM_COUNT: ${{ steps.program_discovery.outputs.program_count }}
+
         run: |
           set -euo pipefail
 
           export LOB
           export SANDBOX_MID
-          export TASK_STEP_OUTCOME
+
+          export OBJECTID_STEP_OUTCOME
           export OBJECTID_IDENTITY_PROVEN
           export PRESERVED_OBJECT_ID
+
+          export PROGRAM_STEP_OUTCOME
+          export PROGRAM_DISCOVERY_STATUS
+          export PROGRAM_OBJECT_ID
+          export PROGRAM_COUNT
 
           python3 <<'PY'
           import os
@@ -1071,17 +1323,6 @@ jobs:
           ) as f:
               queries = json.load(f)
 
-          tasks = []
-
-          if os.path.exists(
-              "automation-tasks.json"
-          ):
-              with open(
-                  "automation-tasks.json",
-                  encoding="utf-8"
-              ) as f:
-                  tasks = json.load(f)
-
           customer_key = (
               automation.get("CustomerKey", "")
               or ""
@@ -1090,13 +1331,6 @@ jobs:
           object_id = (
               automation.get("ObjectID", "")
               or ""
-          )
-
-          task_discovery_outcome = (
-              os.environ.get(
-                  "TASK_STEP_OUTCOME",
-                  ""
-              )
           )
 
           objectid_identity_proven = (
@@ -1113,35 +1347,79 @@ jobs:
               )
           )
 
-          if tasks:
-
-              relationship_status = (
-                  "TASK_OBJECTS_DISCOVERED"
+          objectid_step_outcome = (
+              os.environ.get(
+                  "OBJECTID_STEP_OUTCOME",
+                  ""
               )
+          )
+
+          program_step_outcome = (
+              os.environ.get(
+                  "PROGRAM_STEP_OUTCOME",
+                  ""
+              )
+          )
+
+          program_status = (
+              os.environ.get(
+                  "PROGRAM_DISCOVERY_STATUS",
+                  ""
+              )
+          )
+
+          program_object_id = (
+              os.environ.get(
+                  "PROGRAM_OBJECT_ID",
+                  ""
+              )
+          )
+
+          program_count_raw = (
+              os.environ.get(
+                  "PROGRAM_COUNT",
+                  "0"
+              )
+          )
+
+          try:
+              program_count = int(
+                  program_count_raw or "0"
+              )
+          except ValueError:
+              program_count = 0
+
+          program_resolved = (
+              program_status == "PROGRAM_RESOLVED"
+          )
+
+          relationship_status = "UNRESOLVED"
+
+          if program_resolved:
 
               relationship_reason = (
-                  "SFMC returned AutomationTask objects. "
-                  "No AutomationTask has yet been assigned "
-                  "to this Automation without an explicit "
-                  "SFMC-returned parent relationship."
+                  "SFMC returned a Program matching the "
+                  "retrieved Automation CustomerKey. "
+                  "Program identity is resolved, but no "
+                  "Program -> Task -> Activity -> Query "
+                  "relationship has yet been retrieved."
               )
 
           else:
 
-              relationship_status = "UNRESOLVED"
-
               relationship_reason = (
                   "Automation and QueryDefinition metadata "
                   "were retrieved successfully, but SFMC "
-                  "did not provide enough relationship "
-                  "evidence to associate a task/query with "
-                  "this Automation."
+                  "has not yet returned enough relationship "
+                  "evidence to associate Task, Activity, "
+                  "or QueryDefinition objects with this "
+                  "Automation."
               )
 
           definition = {
 
               "schemaVersion":
-                  "1.2",
+                  "1.3",
 
               "assetType":
                   "automation",
@@ -1209,19 +1487,34 @@ jobs:
                       preserved_object_id,
 
                   "preservedObjectIdIdentityProven":
-                      objectid_identity_proven
+                      objectid_identity_proven,
+
+                  "preservedObjectIdProbeOutcome":
+                      objectid_step_outcome
+              },
+
+              "programDiscovery": {
+
+                  "stepOutcome":
+                      program_step_outcome,
+
+                  "status":
+                      program_status,
+
+                  "programResolved":
+                      program_resolved,
+
+                  "programCount":
+                      program_count,
+
+                  "programObjectId":
+                      program_object_id
               },
 
               "discovery": {
 
                   "queryDefinitionsRetrieved":
-                      len(queries),
-
-                  "automationTasksReturned":
-                      len(tasks),
-
-                  "automationTaskDiscoveryOutcome":
-                      task_discovery_outcome
+                      len(queries)
               },
 
               "relationships": {
@@ -1250,38 +1543,52 @@ jobs:
           print("============================================")
           print("AUTOMATION RETRIEVAL RESULT")
           print("============================================")
+
           print(
               "Automation:",
               definition["automation"]["name"]
           )
+
           print(
               "CustomerKey:",
               customer_key
           )
+
           print(
-              "ObjectID returned by current Retrieve:",
+              "ObjectID returned by Automation Retrieve:",
               object_id or "[not returned]"
           )
+
           print(
               "Preserved Create ObjectID:",
               preserved_object_id or "[not available]"
           )
+
           print(
               "Preserved ObjectID identity proven:",
               objectid_identity_proven
           )
+
+          print(
+              "Program discovery status:",
+              program_status or "[no output]"
+          )
+
+          print(
+              "Program ObjectID:",
+              program_object_id or "[not returned]"
+          )
+
           print(
               "QueryDefinitions:",
               len(queries)
           )
-          print(
-              "AutomationTasks:",
-              len(tasks)
-          )
+
           print(
               "Relationship:",
               relationship_status
           )
+
           print("============================================")
           PY
 
@@ -1313,14 +1620,22 @@ jobs:
           cp automation-metadata.json \
             "$OUTPUT_DIR/automation-metadata.json"
 
-          if [ -f automation-tasks.json ]; then
-            cp automation-tasks.json \
-              "$OUTPUT_DIR/automation-tasks.json"
-          fi
+          cp query-definitions.json \
+            "$OUTPUT_DIR/query-definitions.json"
 
           if [ -f automation-objectid-proof.json ]; then
             cp automation-objectid-proof.json \
               "$OUTPUT_DIR/automation-objectid-proof.json"
+          fi
+
+          if [ -f program-discovery.json ]; then
+            cp program-discovery.json \
+              "$OUTPUT_DIR/program-discovery.json"
+          fi
+
+          if [ -f program-retrieve-response.xml ]; then
+            cp program-retrieve-response.xml \
+              "$OUTPUT_DIR/program-retrieve-response.xml"
           fi
 
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
@@ -1350,21 +1665,22 @@ jobs:
 
             echo ""
             echo "============================================"
-            echo "AUTOMATION OBJECTID PROOF"
+            echo "AUTOMATION OBJECTID PROBE"
             echo "============================================"
 
             jq . \
               "$OUTPUT_DIR/automation-objectid-proof.json"
           fi
 
-          if [ -f "$OUTPUT_DIR/automation-tasks.json" ]; then
+          if [ -f "$OUTPUT_DIR/program-discovery.json" ]; then
 
             echo ""
             echo "============================================"
-            echo "AUTOMATION TASK DISCOVERY"
+            echo "PROGRAM DISCOVERY"
             echo "============================================"
 
-            jq . "$OUTPUT_DIR/automation-tasks.json"
+            jq . \
+              "$OUTPUT_DIR/program-discovery.json"
           fi
 
 
@@ -1416,9 +1732,12 @@ jobs:
 
           OBJECTID_PROOF: ${{ steps.objectid_proof.outputs.identity_proven }}
           KNOWN_OBJECT_ID: ${{ steps.objectid_proof.outputs.known_object_id }}
+          OBJECTID_OUTCOME: ${{ steps.objectid_proof.outcome }}
 
-          TASK_OUTCOME: ${{ steps.task_discovery.outcome }}
-          TASK_COUNT: ${{ steps.task_discovery.outputs.task_count }}
+          PROGRAM_OUTCOME: ${{ steps.program_discovery.outcome }}
+          PROGRAM_STATUS: ${{ steps.program_discovery.outputs.discovery_status }}
+          PROGRAM_COUNT: ${{ steps.program_discovery.outputs.program_count }}
+          PROGRAM_OBJECT_ID: ${{ steps.program_discovery.outputs.program_object_id }}
 
         run: |
           set -euo pipefail
@@ -1437,12 +1756,16 @@ jobs:
           echo "$CUSTOMER_KEY"
 
           echo ""
-          echo "ObjectID returned by current name-based Retrieve:"
+          echo "ObjectID returned by Automation Retrieve:"
           echo "${OBJECT_ID:-[not returned]}"
 
           echo ""
-          echo "Preserved Automation ObjectID:"
+          echo "Preserved Automation NewObjectID:"
           echo "${KNOWN_OBJECT_ID:-[not available]}"
+
+          echo ""
+          echo "Preserved NewObjectID probe outcome:"
+          echo "${OBJECTID_OUTCOME:-[not available]}"
 
           echo ""
           echo "Preserved NewObjectID identity proof:"
@@ -1453,17 +1776,25 @@ jobs:
           echo "$QUERY_COUNT"
 
           echo ""
-          echo "AutomationTask discovery step:"
-          echo "$TASK_OUTCOME"
+          echo "Program discovery step outcome:"
+          echo "${PROGRAM_OUTCOME:-[not available]}"
 
           echo ""
-          echo "AutomationTasks returned:"
-          echo "${TASK_COUNT:-0}"
+          echo "Program discovery status:"
+          echo "${PROGRAM_STATUS:-[not available]}"
+
+          echo ""
+          echo "Programs returned:"
+          echo "${PROGRAM_COUNT:-0}"
+
+          echo ""
+          echo "Program ObjectID:"
+          echo "${PROGRAM_OBJECT_ID:-[not returned]}"
 
           echo ""
           echo "IMPORTANT:"
-          echo "Automation API identity and relationship proof are separate."
-          echo "No Automation -> Task -> Query relationship has been guessed."
+          echo "Program identity and Task/Activity relationship proof are separate."
+          echo "No Program -> Task -> Activity -> Query relationship has been guessed."
 
           echo ""
           echo "=================================================="
