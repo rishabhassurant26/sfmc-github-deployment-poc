@@ -1436,15 +1436,10 @@ jobs:
                   ensure_ascii=False
               )
 
-          if overall not in (
-              "OK",
-              "MoreDataAvailable"
-          ):
-              raise SystemExit(
-                  "Task Describe returned status: "
-                  + overall
-              )
-
+          # Some successful SFMC Describe responses can return
+          # retrievable properties while OverallStatus is blank.
+          # Treat actual returned retrievable properties as the
+          # discovery evidence; fail only when none are returned.
           if not retrievable:
               raise SystemExit(
                   "Task Describe returned no retrievable properties."
@@ -1467,7 +1462,344 @@ jobs:
 
 
       # ============================================================
-      # 11. BUILD DEFINITION
+      # 11. RETRIEVE TASKS FOR RESOLVED PROGRAM
+      #
+      # The previous live Describe proved these Task properties are
+      # retrievable in this BU:
+      #   ObjectID
+      #   Program.ObjectID
+      #   Name
+      #   Description
+      #   Sequence
+      #
+      # This isolated step tests the actual Program -> Task
+      # relationship using the Program ObjectID returned by SFMC.
+      # No task name or naming convention is used.
+      # ============================================================
+      - name: Retrieve Tasks for resolved Program
+        id: task_retrieve
+        continue-on-error: true
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+          PROGRAM_OBJECT_ID: ${{ steps.program_discovery.outputs.program_object_id }}
+        run: |
+          set -euo pipefail
+
+          export ACCESS_TOKEN
+          export SOAP_URL
+          export PROGRAM_OBJECT_ID
+
+          python3 <<'PY'
+          import os
+          import json
+          import html
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+          program_object_id = os.environ.get(
+              "PROGRAM_OBJECT_ID",
+              ""
+          ).strip()
+
+          if not program_object_id:
+              raise SystemExit(
+                  "Program ObjectID is unavailable; Task retrieval "
+                  "will not guess a Program relationship."
+              )
+
+          def esc(value):
+              return html.escape(value or "", quote=True)
+
+          properties = [
+              "ObjectID",
+              "Program.ObjectID",
+              "Name",
+              "Description",
+              "Sequence"
+          ]
+
+          props = "\n".join(
+              f"<et:Properties>{p}</et:Properties>"
+              for p in properties
+          )
+
+          body = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:et="http://exacttarget.com/wsdl/partnerAPI"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+            <soapenv:Header>
+              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
+            </soapenv:Header>
+
+            <soapenv:Body>
+              <et:RetrieveRequestMsg>
+                <et:RetrieveRequest>
+
+                  <et:ObjectType>Task</et:ObjectType>
+
+                  {props}
+
+                  <et:Filter xsi:type="et:SimpleFilterPart">
+                    <et:Property>Program.ObjectID</et:Property>
+                    <et:SimpleOperator>equals</et:SimpleOperator>
+                    <et:Value>{esc(program_object_id)}</et:Value>
+                  </et:Filter>
+
+                </et:RetrieveRequest>
+              </et:RetrieveRequestMsg>
+            </soapenv:Body>
+
+          </soapenv:Envelope>
+          """
+
+          request = urllib.request.Request(
+              soap_url + "/Service.asmx",
+              data=body.encode("utf-8"),
+              headers={
+                  "Content-Type": "text/xml; charset=UTF-8",
+                  "SOAPAction": "Retrieve"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(request) as response:
+                  xml_data = response.read()
+
+          except urllib.error.HTTPError as exc:
+              response_text = exc.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+              print(response_text)
+              raise SystemExit(
+                  f"Task Retrieve HTTP {exc.code}"
+              )
+
+          with open(
+              "task-retrieve-response.xml",
+              "wb"
+          ) as f:
+              f.write(xml_data)
+
+          root = ET.fromstring(xml_data)
+
+          overall = ""
+          request_id = ""
+          tasks = []
+
+          for element in root.iter():
+
+              local = element.tag.split("}")[-1]
+
+              if local == "OverallStatus":
+                  overall = (
+                      element.text or ""
+                  ).strip()
+
+              elif local == "RequestID":
+                  request_id = (
+                      element.text or ""
+                  ).strip()
+
+              elif local == "Results":
+
+                  current = {}
+
+                  for child in list(element):
+
+                      key = child.tag.split("}")[-1]
+
+                      if key == "Program":
+                          program = {}
+                          for sub in list(child):
+                              subkey = sub.tag.split("}")[-1]
+                              program[subkey] = (
+                                  sub.text or ""
+                              ).strip()
+                          current["Program"] = program
+
+                      elif len(list(child)) == 0:
+                          current[key] = (
+                              child.text or ""
+                          ).strip()
+
+                  if current:
+                      tasks.append(current)
+
+          print("")
+          print("============================================")
+          print("PROGRAM -> TASK RETRIEVE")
+          print("============================================")
+          print("SOAP Status:", overall)
+          print("Program ObjectID:", program_object_id)
+          print("Tasks returned:", len(tasks))
+          print("")
+
+          for task in tasks:
+              returned_program_id = (
+                  task.get("Program", {})
+                  .get("ObjectID", "")
+              )
+
+              print(
+                  "Task ObjectID:",
+                  task.get("ObjectID", "")
+              )
+              print(
+                  "Name:",
+                  task.get("Name", "")
+              )
+              print(
+                  "Sequence:",
+                  task.get("Sequence", "")
+              )
+              print(
+                  "Program.ObjectID:",
+                  returned_program_id
+              )
+              print("--------------------------------------------")
+
+          result = {
+              "status": "",
+              "soapStatus": overall,
+              "requestId": request_id,
+              "programObjectId": program_object_id,
+              "tasksReturned": len(tasks),
+              "tasks": tasks
+          }
+
+          if overall not in (
+              "OK",
+              "MoreDataAvailable"
+          ):
+              result["status"] = "SOAP_ERROR"
+
+              with open(
+                  "task-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              with open(
+                  os.environ["GITHUB_OUTPUT"],
+                  "a"
+              ) as f:
+                  f.write("discovery_status=SOAP_ERROR\n")
+                  f.write("task_count=0\n")
+
+              raise SystemExit(
+                  "Task Retrieve returned status: "
+                  + overall
+              )
+
+          if not tasks:
+              result["status"] = "NO_TASKS_RETURNED"
+
+              with open(
+                  "task-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              with open(
+                  os.environ["GITHUB_OUTPUT"],
+                  "a"
+              ) as f:
+                  f.write(
+                      "discovery_status=NO_TASKS_RETURNED\n"
+                  )
+                  f.write("task_count=0\n")
+
+              print(
+                  "SFMC accepted Task Retrieve but returned "
+                  "no Tasks for this Program ObjectID."
+              )
+              raise SystemExit(1)
+
+          mismatched = []
+
+          for task in tasks:
+              returned_program_id = (
+                  task.get("Program", {})
+                  .get("ObjectID", "")
+              )
+
+              if returned_program_id != program_object_id:
+                  mismatched.append(task)
+
+          if mismatched:
+              result["status"] = "PROGRAM_CROSSCHECK_FAILED"
+
+              with open(
+                  "task-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              raise SystemExit(
+                  "One or more returned Tasks did not contain "
+                  "the expected Program.ObjectID."
+              )
+
+          result["status"] = "TASKS_RESOLVED"
+
+          with open(
+              "task-discovery.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  result,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a"
+          ) as f:
+              f.write("discovery_status=TASKS_RESOLVED\n")
+              f.write(
+                  "task_count="
+                  + str(len(tasks))
+                  + "\n"
+              )
+
+          print("")
+          print("RESULT: PROGRAM -> TASK RELATIONSHIP RESOLVED")
+          print("============================================")
+          PY
+
+
+      # ============================================================
+      # 12. BUILD DEFINITION
       #
       # IMPORTANT:
       # Program discovery is recorded as discovery evidence only.
@@ -1489,6 +1821,10 @@ jobs:
 
           TASK_DESCRIBE_STATUS: ${{ steps.task_describe.outputs.describe_status }}
           TASK_PROPERTY_COUNT: ${{ steps.task_describe.outputs.property_count }}
+
+          TASK_RETRIEVE_OUTCOME: ${{ steps.task_retrieve.outcome }}
+          TASK_DISCOVERY_STATUS: ${{ steps.task_retrieve.outputs.discovery_status }}
+          TASK_COUNT: ${{ steps.task_retrieve.outputs.task_count }}
           PROGRAM_COUNT: ${{ steps.program_discovery.outputs.program_count }}
 
         run: |
@@ -1793,7 +2129,7 @@ jobs:
 
 
       # ============================================================
-      # 12. SAVE RESULT
+      # 13. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -1847,6 +2183,16 @@ jobs:
               "$OUTPUT_DIR/task-describe-response.xml"
           fi
 
+          if [ -f task-discovery.json ]; then
+            cp task-discovery.json \
+              "$OUTPUT_DIR/task-discovery.json"
+          fi
+
+          if [ -f task-retrieve-response.xml ]; then
+            cp task-retrieve-response.xml \
+              "$OUTPUT_DIR/task-retrieve-response.xml"
+          fi
+
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Saved to:"
@@ -1854,7 +2200,7 @@ jobs:
 
 
       # ============================================================
-      # 13. DISPLAY RESULT
+      # 14. DISPLAY RESULT
       # ============================================================
       - name: Display retrieved definition
         shell: bash
@@ -1903,9 +2249,20 @@ jobs:
               "$OUTPUT_DIR/task-describe.json"
           fi
 
+          if [ -f "$OUTPUT_DIR/task-discovery.json" ]; then
+
+            echo ""
+            echo "============================================"
+            echo "PROGRAM -> TASK DISCOVERY"
+            echo "============================================"
+
+            jq . \
+              "$OUTPUT_DIR/task-discovery.json"
+          fi
+
 
       # ============================================================
-      # 14. COMMIT
+      # 15. COMMIT
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -1939,7 +2296,7 @@ jobs:
 
 
       # ============================================================
-      # 15. FINAL RESULT
+      # 16. FINAL RESULT
       # ============================================================
       - name: Retrieval complete
         shell: bash
@@ -2018,6 +2375,18 @@ jobs:
           echo ""
           echo "Task retrievable properties:"
           echo "${TASK_PROPERTY_COUNT:-0}"
+
+          echo ""
+          echo "Task Retrieve step outcome:"
+          echo "${TASK_RETRIEVE_OUTCOME:-[not available]}"
+
+          echo ""
+          echo "Program -> Task discovery status:"
+          echo "${TASK_DISCOVERY_STATUS:-[not available]}"
+
+          echo ""
+          echo "Tasks returned:"
+          echo "${TASK_COUNT:-0}"
 
           echo ""
           echo "IMPORTANT:"
