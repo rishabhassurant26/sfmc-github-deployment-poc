@@ -570,287 +570,6 @@ jobs:
 
 
       # ============================================================
-      # 8. PRESERVED NEWOBJECTID PROBE
-      #
-      # Diagnostic only.
-      # Previous live result:
-      # SOAP accepted request but returned zero Automation objects.
-      # Therefore this step must not block the retrieval pipeline.
-      # ============================================================
-      - name: Probe Automation identity using preserved NewObjectID
-        id: objectid_proof
-        continue-on-error: true
-        shell: bash
-        env:
-          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
-          EXPECTED_AUTOMATION_NAME: ${{ inputs.automation_name }}
-          EXPECTED_CUSTOMER_KEY: ${{ steps.automation.outputs.customer_key }}
-
-          # Temporary POC evidence from original SOAP Create response.
-          # NOT part of the final generic architecture.
-          KNOWN_AUTOMATION_OBJECT_ID: "6d9e9be9-77a5-4ea5-931b-dad614ff9769"
-
-        run: |
-          set -euo pipefail
-
-          export ACCESS_TOKEN
-          export SOAP_URL
-          export EXPECTED_AUTOMATION_NAME
-          export EXPECTED_CUSTOMER_KEY
-          export KNOWN_AUTOMATION_OBJECT_ID
-
-          python3 <<'PY'
-          import os
-          import html
-          import json
-          import urllib.request
-          import urllib.error
-          import xml.etree.ElementTree as ET
-
-          token = os.environ["ACCESS_TOKEN"]
-          soap_url = os.environ["SOAP_URL"].rstrip("/")
-          expected_name = os.environ["EXPECTED_AUTOMATION_NAME"]
-          expected_customer_key = os.environ["EXPECTED_CUSTOMER_KEY"]
-          known_object_id = os.environ["KNOWN_AUTOMATION_OBJECT_ID"]
-
-          def esc(value):
-              return html.escape(value or "", quote=True)
-
-          body = f"""<?xml version="1.0" encoding="UTF-8"?>
-          <soapenv:Envelope
-            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-            xmlns:et="http://exacttarget.com/wsdl/partnerAPI"
-            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-
-            <soapenv:Header>
-              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
-            </soapenv:Header>
-
-            <soapenv:Body>
-              <et:RetrieveRequestMsg>
-                <et:RetrieveRequest>
-
-                  <et:ObjectType>Automation</et:ObjectType>
-
-                  <et:Properties>ObjectID</et:Properties>
-                  <et:Properties>CustomerKey</et:Properties>
-                  <et:Properties>Name</et:Properties>
-                  <et:Properties>Description</et:Properties>
-                  <et:Properties>Status</et:Properties>
-                  <et:Properties>IsActive</et:Properties>
-                  <et:Properties>CreatedDate</et:Properties>
-                  <et:Properties>ModifiedDate</et:Properties>
-
-                  <et:Filter xsi:type="et:SimpleFilterPart">
-                    <et:Property>ObjectID</et:Property>
-                    <et:SimpleOperator>equals</et:SimpleOperator>
-                    <et:Value>{esc(known_object_id)}</et:Value>
-                  </et:Filter>
-
-                </et:RetrieveRequest>
-              </et:RetrieveRequestMsg>
-            </soapenv:Body>
-
-          </soapenv:Envelope>
-          """
-
-          request = urllib.request.Request(
-              soap_url + "/Service.asmx",
-              data=body.encode("utf-8"),
-              headers={
-                  "Content-Type": "text/xml; charset=UTF-8",
-                  "SOAPAction": "Retrieve"
-              },
-              method="POST"
-          )
-
-          try:
-              with urllib.request.urlopen(request) as response:
-                  xml_data = response.read()
-
-          except urllib.error.HTTPError as exc:
-              response_text = exc.read().decode(
-                  "utf-8",
-                  errors="replace"
-              )
-
-              print(response_text)
-
-              raise SystemExit(
-                  f"Automation ObjectID Retrieve HTTP {exc.code}"
-              )
-
-          root = ET.fromstring(xml_data)
-
-          overall = ""
-          results = []
-
-          for element in root.iter():
-
-              local = element.tag.split("}")[-1]
-
-              if local == "OverallStatus":
-                  overall = (element.text or "").strip()
-
-              elif local == "Results":
-
-                  current = {}
-
-                  for child in list(element):
-                      key = child.tag.split("}")[-1]
-                      current[key] = (
-                          child.text or ""
-                      ).strip()
-
-                  if (
-                      current.get("Name")
-                      or current.get("CustomerKey")
-                      or current.get("ObjectID")
-                  ):
-                      results.append(current)
-
-          print("")
-          print("============================================")
-          print("AUTOMATION PRESERVED NEWOBJECTID PROBE")
-          print("============================================")
-          print("SOAP Status:", overall)
-          print("Requested ObjectID:", known_object_id)
-          print("Results returned:", len(results))
-          print("============================================")
-
-          proof = {
-              "status": "",
-              "soapStatus": overall,
-              "requestedObjectId": known_object_id,
-              "expectedAutomation": {
-                  "name": expected_name,
-                  "customerKey": expected_customer_key
-              },
-              "resultsReturned": len(results),
-              "results": results
-          }
-
-          if overall not in (
-              "OK",
-              "MoreDataAvailable"
-          ):
-
-              proof["status"] = "SOAP_ERROR"
-
-              with open(
-                  "automation-objectid-proof.json",
-                  "w",
-                  encoding="utf-8"
-              ) as f:
-                  json.dump(
-                      proof,
-                      f,
-                      indent=2,
-                      ensure_ascii=False
-                  )
-
-              raise SystemExit(
-                  "Automation ObjectID probe returned: "
-                  + overall
-              )
-
-          if len(results) == 0:
-
-              proof["status"] = "NOT_RESOLVED"
-
-              with open(
-                  "automation-objectid-proof.json",
-                  "w",
-                  encoding="utf-8"
-              ) as f:
-                  json.dump(
-                      proof,
-                      f,
-                      indent=2,
-                      ensure_ascii=False
-                  )
-
-              with open(
-                  os.environ["GITHUB_OUTPUT"],
-                  "a"
-              ) as f:
-                  f.write("identity_proven=false\n")
-                  f.write(
-                      "known_object_id="
-                      + known_object_id
-                      + "\n"
-                  )
-
-              print(
-                  "Preserved NewObjectID was not resolved "
-                  "by Automation ObjectID Retrieve."
-              )
-
-              raise SystemExit(1)
-
-          exact = [
-              item
-              for item in results
-              if (
-                  item.get("Name") == expected_name
-                  and item.get("CustomerKey")
-                      == expected_customer_key
-              )
-          ]
-
-          if len(exact) != 1:
-
-              proof["status"] = "IDENTITY_NOT_PROVEN"
-
-              with open(
-                  "automation-objectid-proof.json",
-                  "w",
-                  encoding="utf-8"
-              ) as f:
-                  json.dump(
-                      proof,
-                      f,
-                      indent=2,
-                      ensure_ascii=False
-                  )
-
-              raise SystemExit(
-                  "ObjectID probe did not resolve uniquely "
-                  "to the expected Automation."
-              )
-
-          proof["status"] = "IDENTITY_PROVEN"
-          proof["returnedAutomation"] = exact[0]
-
-          with open(
-              "automation-objectid-proof.json",
-              "w",
-              encoding="utf-8"
-          ) as f:
-              json.dump(
-                  proof,
-                  f,
-                  indent=2,
-                  ensure_ascii=False
-              )
-
-          with open(
-              os.environ["GITHUB_OUTPUT"],
-              "a"
-          ) as f:
-              f.write("identity_proven=true\n")
-              f.write(
-                  "known_object_id="
-                  + known_object_id
-                  + "\n"
-              )
-
-          print("RESULT: AUTOMATION API IDENTITY PROVEN")
-          PY
-
-
-      # ============================================================
       # 9. PROGRAM DISCOVERY
       #
       # Official Installed Package SOAP access documentation:
@@ -3773,336 +3492,293 @@ jobs:
           PY
 
 
-      # 19. BUILD DEFINITION
-      #
-      # IMPORTANT:
-      # Program discovery is recorded as discovery evidence only.
-      # It is NOT yet treated as Task/Activity relationship proof.
       # ============================================================
-      - name: Build Automation retrieval definition
+      # 19. BUILD FINAL DYNAMIC DEPLOYMENT-READY DEFINITION
+      #
+      # No asset-specific ObjectID/CustomerKey/name is hardcoded here.
+      # Relationships come only from live SFMC retrieval evidence:
+      # Automation -> Program -> Task -> Activity -> QueryDefinition.
+      #
+      # Schedule recurrence is intentionally not versioned because SFMC
+      # did not return a reliable recurrence definition in this POC.
+      # Production scheduling/activation remains manual.
+      # ============================================================
+      - name: Build final dynamic Automation definition
+        id: final_definition
         shell: bash
         env:
           LOB: ${{ steps.config.outputs.lob }}
           SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
-
-          OBJECTID_STEP_OUTCOME: ${{ steps.objectid_proof.outcome }}
-          OBJECTID_IDENTITY_PROVEN: ${{ steps.objectid_proof.outputs.identity_proven }}
-          PRESERVED_OBJECT_ID: ${{ steps.objectid_proof.outputs.known_object_id }}
-
-          PROGRAM_STEP_OUTCOME: ${{ steps.program_discovery.outcome }}
-          PROGRAM_DISCOVERY_STATUS: ${{ steps.program_discovery.outputs.discovery_status }}
           PROGRAM_OBJECT_ID: ${{ steps.program_discovery.outputs.program_object_id }}
-
-          TASK_DESCRIBE_STATUS: ${{ steps.task_describe.outputs.describe_status }}
-          TASK_PROPERTY_COUNT: ${{ steps.task_describe.outputs.property_count }}
-
-          TASK_RETRIEVE_OUTCOME: ${{ steps.task_retrieve.outcome }}
-          TASK_DISCOVERY_STATUS: ${{ steps.task_retrieve.outputs.discovery_status }}
-          TASK_COUNT: ${{ steps.task_retrieve.outputs.task_count }}
-          PROGRAM_COUNT: ${{ steps.program_discovery.outputs.program_count }}
-
         run: |
           set -euo pipefail
 
-          export LOB
-          export SANDBOX_MID
-
-          export OBJECTID_STEP_OUTCOME
-          export OBJECTID_IDENTITY_PROVEN
-          export PRESERVED_OBJECT_ID
-
-          export PROGRAM_STEP_OUTCOME
-          export PROGRAM_DISCOVERY_STATUS
-          export PROGRAM_OBJECT_ID
-          export PROGRAM_COUNT
+          export LOB SANDBOX_MID PROGRAM_OBJECT_ID
 
           python3 <<'PY'
           import os
           import json
 
-          with open(
-              "automation-metadata.json",
-              encoding="utf-8"
-          ) as f:
-              automation = json.load(f)
+          def load_json(path):
+              if not os.path.exists(path):
+                  raise SystemExit(f"Required retrieval evidence missing: {path}")
+              with open(path, encoding="utf-8") as f:
+                  return json.load(f)
 
-          with open(
-              "query-definitions.json",
-              encoding="utf-8"
-          ) as f:
-              queries = json.load(f)
+          automation = load_json("automation-metadata.json")
+          program = load_json("program-discovery.json")
+          task_discovery = load_json("task-discovery.json")
+          activity_discovery = load_json("activity-discovery.json")
+          query_relationship = load_json("query-relationship.json")
 
-          customer_key = (
-              automation.get("CustomerKey", "")
-              or ""
-          )
+          starting_source = {}
+          if os.path.exists("starting-source-discovery.json"):
+              starting_source = load_json("starting-source-discovery.json")
 
-          object_id = (
-              automation.get("ObjectID", "")
-              or ""
-          )
+          program_object_id = (os.environ.get("PROGRAM_OBJECT_ID", "") or "").strip()
+          if not program_object_id:
+              raise SystemExit("Dynamic Program ObjectID was not resolved.")
 
-          objectid_identity_proven = (
-              os.environ.get(
-                  "OBJECTID_IDENTITY_PROVEN",
-                  ""
-              ).lower() == "true"
-          )
+          if program.get("status") != "PROGRAM_RESOLVED":
+              raise SystemExit("Program relationship is not resolved.")
 
-          preserved_object_id = (
-              os.environ.get(
-                  "PRESERVED_OBJECT_ID",
-                  ""
-              )
-          )
+          tasks = task_discovery.get("tasks") or []
+          activities = activity_discovery.get("activities") or []
+          relationships = query_relationship.get("relationships") or []
 
-          objectid_step_outcome = (
-              os.environ.get(
-                  "OBJECTID_STEP_OUTCOME",
-                  ""
-              )
-          )
-
-          program_step_outcome = (
-              os.environ.get(
-                  "PROGRAM_STEP_OUTCOME",
-                  ""
-              )
-          )
-
-          program_status = (
-              os.environ.get(
-                  "PROGRAM_DISCOVERY_STATUS",
-                  ""
-              )
-          )
-
-          program_object_id = (
-              os.environ.get(
-                  "PROGRAM_OBJECT_ID",
-                  ""
-              )
-          )
-
-          program_count_raw = (
-              os.environ.get(
-                  "PROGRAM_COUNT",
-                  "0"
-              )
-          )
-
-          try:
-              program_count = int(
-                  program_count_raw or "0"
-              )
-          except ValueError:
-              program_count = 0
-
-          program_resolved = (
-              program_status == "PROGRAM_RESOLVED"
-          )
-
-          relationship_status = "UNRESOLVED"
-
-          if program_resolved:
-
-              relationship_reason = (
-                  "SFMC returned a Program matching the "
-                  "retrieved Automation CustomerKey. "
-                  "Program identity is resolved, but no "
-                  "Program -> Task -> Activity -> Query "
-                  "relationship has yet been retrieved."
+          if not tasks:
+              raise SystemExit("No dynamically retrieved Tasks are available.")
+          if not activities:
+              raise SystemExit("No dynamically retrieved Activities are available.")
+          if not relationships:
+              raise SystemExit(
+                  "No exact Activity -> QueryDefinition relationship is available."
               )
 
-          else:
+          # Index exact retrieved relationships only.
+          rel_by_activity = {}
+          for rel in relationships:
+              activity_oid = (
+                  rel.get("activity", {}).get("objectId", "")
+                  or rel.get("activityObjectId", "")
+                  or ""
+              ).strip()
 
-              relationship_reason = (
-                  "Automation and QueryDefinition metadata "
-                  "were retrieved successfully, but SFMC "
-                  "has not yet returned enough relationship "
-                  "evidence to associate Task, Activity, "
-                  "or QueryDefinition objects with this "
-                  "Automation."
-              )
+              if not activity_oid:
+                  # Current proven evidence stores activity identity at top level.
+                  activity_oid = (
+                      rel.get("activityObjectId", "")
+                      or ""
+                  ).strip()
+
+              if not activity_oid:
+                  # Defensive support for the proven current JSON shape.
+                  definition_oid = (
+                      rel.get("match", {}).get(
+                          "activityDefinitionObjectId", ""
+                      )
+                      or ""
+                  ).strip()
+                  for a in activities:
+                      if (
+                          (a.get("Definition", {}).get("ObjectID", "") or "").strip()
+                          == definition_oid
+                      ):
+                          activity_oid = (
+                              a.get("ObjectID", "") or ""
+                          ).strip()
+                          break
+
+              if activity_oid:
+                  rel_by_activity[activity_oid] = rel
+
+          def seq_value(value):
+              try:
+                  return int(value)
+              except (TypeError, ValueError):
+                  return 0
+
+          normalized_tasks = []
+
+          for task in sorted(tasks, key=lambda x: seq_value(x.get("Sequence"))):
+              task_oid = (task.get("ObjectID", "") or "").strip()
+              returned_program_oid = (
+                  task.get("Program", {}).get("ObjectID", "")
+                  or ""
+              ).strip()
+
+              if returned_program_oid != program_object_id:
+                  raise SystemExit(
+                      "Task Program.ObjectID does not match dynamically resolved Program."
+                  )
+
+              task_activities = []
+
+              for activity in activities:
+                  returned_task_oid = (
+                      activity.get("Task", {}).get("ObjectID", "")
+                      or ""
+                  ).strip()
+
+                  if returned_task_oid != task_oid:
+                      continue
+
+                  activity_oid = (activity.get("ObjectID", "") or "").strip()
+                  rel = rel_by_activity.get(activity_oid)
+
+                  if not rel:
+                      raise SystemExit(
+                          "An Activity has no exact QueryDefinition relationship: "
+                          + activity_oid
+                      )
+
+                  query = rel.get("queryDefinition") or {}
+                  definition_oid = (
+                      activity.get("Definition", {}).get("ObjectID", "")
+                      or ""
+                  ).strip()
+                  query_oid = (query.get("objectId", "") or "").strip()
+
+                  if not definition_oid or definition_oid != query_oid:
+                      raise SystemExit(
+                          "Activity Definition.ObjectID does not exactly match "
+                          "QueryDefinition ObjectID."
+                      )
+
+                  task_activities.append({
+                      "sequence": seq_value(activity.get("Sequence")),
+                      "name": activity.get("Name", ""),
+                      "customerKey": activity.get("CustomerKey", ""),
+                      "activityTypeId": activity.get(
+                          "PartnerAPIObjectTypeID", ""
+                      ),
+                      "definition": {
+                          "type": "QueryDefinition",
+                          "name": query.get("name", ""),
+                          "customerKey": query.get("customerKey", ""),
+                          "description": query.get("description", ""),
+                          "queryText": query.get("queryText", ""),
+                          "targetType": query.get("targetType", ""),
+                          "targetUpdateType": query.get("targetUpdateType", "")
+                      }
+                  })
+
+              task_activities.sort(key=lambda x: x["sequence"])
+
+              if not task_activities:
+                  raise SystemExit(
+                      "A retrieved Task has no dynamically linked Activities: "
+                      + task_oid
+                  )
+
+              normalized_tasks.append({
+                  "sequence": seq_value(task.get("Sequence")),
+                  "name": task.get("Name", ""),
+                  "description": task.get("Description", ""),
+                  "activities": task_activities
+              })
+
+          # Retrieve AutomationType from the already-proven discovery artifact.
+          automation_type = ""
+          automation_source = {
+              "automationSourceId": "",
+              "automationSourceType": ""
+          }
+
+          auto_parent = (
+              starting_source.get("parents", {}).get("Automation", {})
+          )
+
+          for prop in auto_parent.get("properties", []) or []:
+              if prop.get("property") == "AutomationType":
+                  automation_type = prop.get("value") or ""
+              elif prop.get("property") == "AutomationSource.AutomationSourceID":
+                  automation_source["automationSourceId"] = prop.get("value") or ""
+              elif prop.get("property") == "AutomationSource.AutomationSourceType":
+                  automation_source["automationSourceType"] = prop.get("value") or ""
 
           definition = {
-
-              "schemaVersion":
-                  "1.3",
-
-              "assetType":
-                  "automation",
-
-              "environment":
-                  "sandbox",
-
-              "businessUnitMid":
-                  os.environ["SANDBOX_MID"],
-
-              "lineOfBusiness":
-                  os.environ["LOB"],
+              "schemaVersion": "2.0",
+              "assetType": "automation",
+              "environment": "sandbox",
+              "businessUnitMid": os.environ["SANDBOX_MID"],
+              "lineOfBusiness": os.environ["LOB"],
 
               "automation": {
-
-                  "name":
-                      automation.get("Name", ""),
-
-                  "customerKey":
-                      customer_key,
-
-                  "objectId":
-                      object_id,
-
-                  "description":
-                      automation.get(
-                          "Description",
-                          ""
-                      ),
-
-                  "status":
-                      automation.get(
-                          "Status",
-                          ""
-                      ),
-
-                  "isActive":
-                      automation.get(
-                          "IsActive",
-                          ""
-                      ),
-
-                  "createdDate":
-                      automation.get(
-                          "CreatedDate",
-                          ""
-                      ),
-
-                  "modifiedDate":
-                      automation.get(
-                          "ModifiedDate",
-                          ""
-                      )
+                  "name": automation.get("Name", ""),
+                  "customerKey": automation.get("CustomerKey", ""),
+                  "description": automation.get("Description", ""),
+                  "automationType": automation_type,
+                  "source": automation_source
               },
 
-              "identity": {
-
-                  "customerKeyResolved":
-                      bool(customer_key),
-
-                  "objectIdReturned":
-                      bool(object_id),
-
-                  "preservedCreateObjectId":
-                      preserved_object_id,
-
-                  "preservedObjectIdIdentityProven":
-                      objectid_identity_proven,
-
-                  "preservedObjectIdProbeOutcome":
-                      objectid_step_outcome
+              "program": {
+                  # ObjectID is retrieval evidence only. Production deployment
+                  # must resolve/create its own Production ObjectID dynamically.
+                  "sourceObjectId": program_object_id
               },
 
-              "programDiscovery": {
+              "tasks": normalized_tasks,
 
-                  "stepOutcome":
-                      program_step_outcome,
-
-                  "status":
-                      program_status,
-
-                  "programResolved":
-                      program_resolved,
-
-                  "programCount":
-                      program_count,
-
-                  "programObjectId":
-                      program_object_id
+              "schedule": {
+                  "deploymentMode": "manual",
+                  "activateAfterDeployment": False,
+                  "reason": (
+                      "Automation structure is version-controlled and deployed "
+                      "by CI/CD; Production schedule/activation is configured "
+                      "manually after deployment."
+                  )
               },
 
-              "discovery": {
-
-                  "queryDefinitionsRetrieved":
-                      len(queries)
-              },
-
-              "relationships": {
-
-                  "status":
-                      relationship_status,
-
-                  "reason":
-                      relationship_reason
+              "deploymentPolicy": {
+                  "deployStructure": True,
+                  "deploySchedule": False,
+                  "activateAutomation": False,
+                  "runAutomation": False
               }
           }
+
+          if not definition["automation"]["name"]:
+              raise SystemExit("Automation Name is missing.")
+          if not definition["automation"]["customerKey"]:
+              raise SystemExit("Automation CustomerKey is missing.")
 
           with open(
               "retrieved-definition.json",
               "w",
               encoding="utf-8"
           ) as f:
-              json.dump(
-                  definition,
-                  f,
-                  indent=2,
-                  ensure_ascii=False
+              json.dump(definition, f, indent=2, ensure_ascii=False)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"task_count={len(normalized_tasks)}\n")
+              f.write(
+                  "activity_count="
+                  + str(sum(len(t["activities"]) for t in normalized_tasks))
+                  + "\n"
               )
 
           print("")
           print("============================================")
-          print("AUTOMATION RETRIEVAL RESULT")
+          print("FINAL DYNAMIC AUTOMATION DEFINITION")
           print("============================================")
-
+          print("Automation:", definition["automation"]["name"])
+          print("CustomerKey:", definition["automation"]["customerKey"])
+          print("AutomationType:", automation_type or "[not returned]")
+          print("Program ObjectID resolved dynamically:", program_object_id)
+          print("Tasks:", len(normalized_tasks))
           print(
-              "Automation:",
-              definition["automation"]["name"]
+              "Activities:",
+              sum(len(t["activities"]) for t in normalized_tasks)
           )
-
-          print(
-              "CustomerKey:",
-              customer_key
-          )
-
-          print(
-              "ObjectID returned by Automation Retrieve:",
-              object_id or "[not returned]"
-          )
-
-          print(
-              "Preserved Create ObjectID:",
-              preserved_object_id or "[not available]"
-          )
-
-          print(
-              "Preserved ObjectID identity proven:",
-              objectid_identity_proven
-          )
-
-          print(
-              "Program discovery status:",
-              program_status or "[no output]"
-          )
-
-          print(
-              "Program ObjectID:",
-              program_object_id or "[not returned]"
-          )
-
-          print(
-              "QueryDefinitions:",
-              len(queries)
-          )
-
-          print(
-              "Relationship:",
-              relationship_status
-          )
-
+          print("Schedule deployment: MANUAL")
+          print("Auto activate/run: NO")
+          print("")
+          print("RESULT: DEPLOYMENT-READY DYNAMIC DEFINITION BUILT")
           print("============================================")
           PY
 
 
-      # ============================================================
       # 20. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
