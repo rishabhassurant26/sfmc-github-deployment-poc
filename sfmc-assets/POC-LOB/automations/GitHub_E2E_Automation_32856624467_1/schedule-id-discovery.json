@@ -1,0 +1,16 @@
+{
+  "status": "SCHEDULE_ID_RESOLVED",
+  "soapStatus": "OK",
+  "requestId": "26b68c76-17a9-4b9f-a82a-ff8625e7dcfc",
+  "requestedProgramObjectId": "6d9e9be9-77a5-4ea5-931b-dad614ff9769",
+  "programsReturned": 1,
+  "program": {
+    "ObjectID": "6d9e9be9-77a5-4ea5-931b-dad614ff9769",
+    "CustomerKey": "E2EA_32856624467_1",
+    "Name": "GitHub E2E Automation 32856624467_1",
+    "Schedule": {
+      "ID": "0"
+    }
+  },
+  "scheduleId": "0"
+}
