@@ -1,0 +1,43 @@
+{
+  "status": "ACTIVITIES_RESOLVED",
+  "tasksChecked": 1,
+  "taskObjectIds": [
+    "17f8d090-a69b-49d7-b3b1-058ce1e6908b"
+  ],
+  "soapResults": [
+    {
+      "taskObjectId": "17f8d090-a69b-49d7-b3b1-058ce1e6908b",
+      "soapStatus": "OK",
+      "requestId": "60d9f3d7-ed19-41ee-98fe-db13786d4774",
+      "activitiesReturned": 1
+    }
+  ],
+  "activitiesReturned": 1,
+  "activities": [
+    {
+      "PartnerKey": "",
+      "ObjectID": "2a327c76-dbcc-4f3d-9550-13d9f28f12a4",
+      "CustomerKey": "E2EACT_32856624467_1",
+      "Name": "GitHub E2E Active Query 32856624467_1",
+      "Description": "",
+      "IsActive": "true",
+      "Definition": {
+        "PartnerKey": "",
+        "ObjectID": "42c239b1-af53-4d13-80ce-7ae7fd9937ec"
+      },
+      "Program": {
+        "PartnerKey": "",
+        "ObjectID": "6d9e9be9-77a5-4ea5-931b-dad614ff9769"
+      },
+      "Task": {
+        "PartnerKey": "",
+        "ObjectID": "17f8d090-a69b-49d7-b3b1-058ce1e6908b"
+      },
+      "Sequence": "0",
+      "_sourceTaskObjectId": "17f8d090-a69b-49d7-b3b1-058ce1e6908b"
+    }
+  ],
+  "rawResponseFiles": [
+    "activity-retrieve-response-1.xml"
+  ]
+}
