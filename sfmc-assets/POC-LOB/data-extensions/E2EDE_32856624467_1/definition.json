@@ -1,0 +1,54 @@
+{
+  "assetType": "DataExtension",
+  "name": "GITHUB_E2E_TARGET_DE_32856624467_1",
+  "customerKey": "E2EDE_32856624467_1",
+  "description": "          End-to-end Target DE created through GitHub CI/CD        ",
+  "isSendable": false,
+  "isTestable": false,
+  "fields": [
+    {
+      "name": "CustomerID",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": true,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 0,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "FirstName",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 1,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "Email",
+      "fieldType": "EmailAddress",
+      "maxLength": 254,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 2,
+      "precision": null,
+      "scale": null
+    },
+    {
+      "name": "Status",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 3,
+      "precision": null,
+      "scale": null
+    }
+  ]
+}
