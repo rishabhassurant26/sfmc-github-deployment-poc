@@ -182,8 +182,9 @@ jobs:
 
           echo "SFMC Sandbox authentication successful."
 
-      # ============================================================
+           # ============================================================
       # 6. RETRIEVE EXACT JOURNEY
+      #    UPDATED: PAGE THROUGH COMPLETE JOURNEY COLLECTION
       # ============================================================
       - name: Retrieve Journey definition
         id: journey
@@ -218,37 +219,70 @@ jobs:
 
               try:
                   with urllib.request.urlopen(req) as response:
-                      return json.loads(response.read().decode("utf-8"))
+                      return json.loads(
+                          response.read().decode("utf-8")
+                      )
               except urllib.error.HTTPError as exc:
-                  body = exc.read().decode("utf-8", errors="replace")
+                  body = exc.read().decode(
+                      "utf-8",
+                      errors="replace"
+                  )
+
                   raise RuntimeError(
                       f"Journey Builder REST request failed "
                       f"HTTP {exc.code}: {body}"
                   )
 
-          query = urllib.parse.urlencode({
-              "$page": 1,
-              "$pageSize": 50,
-              "nameOrDescription": journey_name,
-              "mostRecentVersionOnly": "true"
-          })
+          # --------------------------------------------------------
+          # Search all Journey pages.
+          # Do not depend on nameOrDescription search behaviour.
+          # --------------------------------------------------------
+          exact = []
+          page = 1
 
-          collection = get_json(
-              f"{rest_url}/interaction/v1/interactions?{query}"
-          )
+          while True:
+              query = urllib.parse.urlencode({
+                  "$page": page,
+                  "$pageSize": 50,
+                  "mostRecentVersionOnly": "true"
+              })
 
-          items = collection.get("items") or []
+              collection = get_json(
+                  f"{rest_url}/interaction/v1/interactions?{query}"
+              )
 
-          exact = [
-              item for item in items
-              if (item.get("name") or "").strip() == journey_name.strip()
-          ]
+              items = collection.get("items") or []
+
+              print(
+                  f"Journey collection page {page}: "
+                  f"{len(items)} item(s) returned."
+              )
+
+              for item in items:
+                  returned_name = (
+                      item.get("name") or ""
+                  ).strip()
+
+                  if returned_name == journey_name.strip():
+                      exact.append(item)
+
+              if exact:
+                  break
+
+              # Less than requested page size means this was
+              # the final available page.
+              if len(items) < 50:
+                  break
+
+              page += 1
 
           if len(exact) == 0:
               raise RuntimeError(
-                  f"Exact Journey not found in Sandbox: {journey_name}"
+                  f"Exact Journey not found in Sandbox after "
+                  f"checking {page} page(s): {journey_name}"
               )
 
+          # If multiple versions somehow remain, choose newest.
           if len(exact) > 1:
               exact.sort(
                   key=lambda x: int(
@@ -268,15 +302,31 @@ jobs:
                   "Journey search result did not return Journey id."
               )
 
-          # Retrieve the actual Journey Specification by its exact ID.
+          print("Exact Journey located in collection.")
+          print(f"Name: {selected.get('name')}")
+          print(f"ID: {journey_id}")
+          print(
+              "Collection Version:",
+              selected.get("version")
+              or selected.get("versionNumber")
+          )
+
+          # --------------------------------------------------------
+          # Retrieve complete Journey Specification using exact ID
+          # --------------------------------------------------------
           journey = get_json(
               f"{rest_url}/interaction/v1/interactions/"
               f"{urllib.parse.quote(str(journey_id), safe='')}"
           )
 
-          if (journey.get("name") or "").strip() != journey_name.strip():
+          actual_name = (
+              journey.get("name") or ""
+          ).strip()
+
+          if actual_name != journey_name.strip():
               raise RuntimeError(
-                  "Retrieved Journey name does not match requested Journey."
+                  "Retrieved Journey name does not match "
+                  "requested Journey."
               )
 
           triggers = journey.get("triggers") or []
@@ -284,23 +334,37 @@ jobs:
 
           if len(triggers) != 1:
               raise RuntimeError(
-                  f"Expected exactly one Journey trigger; found {len(triggers)}."
+                  f"Expected exactly one Journey trigger; "
+                  f"found {len(triggers)}."
               )
 
           trigger = triggers[0]
-          event_key = trigger.get("eventDefinitionKey")
+
+          event_key = trigger.get(
+              "eventDefinitionKey"
+          )
 
           if not event_key:
               raise RuntimeError(
-                  "Journey trigger does not contain eventDefinitionKey."
+                  "Journey trigger does not contain "
+                  "eventDefinitionKey."
               )
 
-          with open("/tmp/journey.json", "w", encoding="utf-8") as f:
-              json.dump(journey, f, indent=2, ensure_ascii=False)
+          # Preserve exact source Journey response for
+          # subsequent normalization.
+          with open(
+              "/tmp/journey.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  journey,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
 
-          with open("/tmp/event-definition-key.txt", "w", encoding="utf-8") as f:
-              f.write(str(event_key))
-
+          print("")
           print("Journey retrieved successfully.")
           print(f"Name: {journey.get('name')}")
           print(f"Key: {journey.get('key')}")
@@ -312,13 +376,22 @@ jobs:
           )
           print(f"Status: {journey.get('status')}")
           print(f"Activities: {len(activities)}")
-          print(f"Event Definition Key: {event_key}")
+          print(
+              f"Event Definition Key: {event_key}"
+          )
 
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"journey_id={journey_id}\n")
-              f.write(f"event_definition_key={event_key}\n")
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a",
+              encoding="utf-8"
+          ) as f:
+              f.write(
+                  f"journey_id={journey_id}\n"
+              )
+              f.write(
+                  f"event_definition_key={event_key}\n"
+              )
           PY
-
       # ============================================================
       # 7. RETRIEVE EXACT ENTRY EVENT DEFINITION
       # ============================================================
