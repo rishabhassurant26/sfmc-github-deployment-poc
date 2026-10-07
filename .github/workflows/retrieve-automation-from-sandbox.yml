@@ -1497,6 +1497,10 @@ jobs:
           ACTIVITY_RETRIEVE_OUTCOME: ${{ steps.activity_retrieve.outcome }}
           ACTIVITY_DISCOVERY_STATUS: ${{ steps.activity_retrieve.outputs.discovery_status }}
           ACTIVITY_COUNT: ${{ steps.activity_retrieve.outputs.activity_count }}
+
+          QUERY_RELATIONSHIP_OUTCOME: ${{ steps.query_relationship.outcome }}
+          QUERY_RELATIONSHIP_STATUS: ${{ steps.query_relationship.outputs.relationship_status }}
+          QUERY_RELATIONSHIP_COUNT: ${{ steps.query_relationship.outputs.relationship_count }}
         run: |
           set -euo pipefail
 
@@ -2418,7 +2422,215 @@ jobs:
 
 
       # ============================================================
-      # 14. BUILD DEFINITION
+      # ============================================================
+      # 14. RESOLVE ACTIVITY -> QUERYDEFINITION RELATIONSHIP
+      #
+      # Exact join only:
+      # Activity.Definition.ObjectID == QueryDefinition.ObjectID
+      # No name/CustomerKey/naming-convention guessing.
+      # ============================================================
+      - name: Resolve Activities to QueryDefinitions
+        id: query_relationship
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import os
+          import json
+
+          if not os.path.exists("activity-discovery.json"):
+              raise SystemExit(
+                  "activity-discovery.json is unavailable; "
+                  "Query relationship will not be guessed."
+              )
+
+          if not os.path.exists("query-definitions.json"):
+              raise SystemExit(
+                  "query-definitions.json is unavailable."
+              )
+
+          with open("activity-discovery.json", encoding="utf-8") as f:
+              activity_discovery = json.load(f)
+
+          with open("query-definitions.json", encoding="utf-8") as f:
+              queries = json.load(f)
+
+          if activity_discovery.get("status") != "ACTIVITIES_RESOLVED":
+              raise SystemExit(
+                  "Task -> Activity relationship is not resolved."
+              )
+
+          activities = activity_discovery.get("activities") or []
+
+          query_by_object_id = {}
+          duplicate_ids = []
+
+          for query in queries:
+              oid = (query.get("ObjectID", "") or "").strip()
+              if not oid:
+                  continue
+              if oid in query_by_object_id:
+                  duplicate_ids.append(oid)
+              query_by_object_id[oid] = query
+
+          result = {
+              "status": "",
+              "activitiesChecked": len(activities),
+              "queryDefinitionsAvailable": len(queries),
+              "relationshipsResolved": 0,
+              "relationships": [],
+              "unresolvedActivities": [],
+              "duplicateQueryObjectIds": sorted(set(duplicate_ids))
+          }
+
+          if duplicate_ids:
+              result["status"] = "DUPLICATE_QUERY_OBJECTIDS"
+              with open("query-relationship.json", "w", encoding="utf-8") as f:
+                  json.dump(result, f, indent=2, ensure_ascii=False)
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("relationship_status=DUPLICATE_QUERY_OBJECTIDS\n")
+                  f.write("relationship_count=0\n")
+              raise SystemExit(
+                  "Duplicate QueryDefinition ObjectIDs found."
+              )
+
+          print("")
+          print("============================================")
+          print("ACTIVITY -> QUERYDEFINITION RESOLUTION")
+          print("============================================")
+          print("Activities checked:", len(activities))
+          print("QueryDefinitions available:", len(queries))
+          print("")
+
+          for activity in activities:
+              activity_oid = (activity.get("ObjectID", "") or "").strip()
+              activity_name = activity.get("Name", "") or ""
+              definition_oid = (
+                  activity.get("Definition", {}).get("ObjectID", "") or ""
+              ).strip()
+
+              print("Activity ObjectID:", activity_oid)
+              print("Activity Name:", activity_name)
+              print(
+                  "Definition.ObjectID:",
+                  definition_oid or "[not returned]"
+              )
+
+              if not definition_oid:
+                  result["unresolvedActivities"].append({
+                      "activityObjectId": activity_oid,
+                      "activityName": activity_name,
+                      "reason": "Activity Definition.ObjectID was not returned."
+                  })
+                  print("Relationship: UNRESOLVED")
+                  print("--------------------------------------------")
+                  continue
+
+              query = query_by_object_id.get(definition_oid)
+
+              if query is None:
+                  result["unresolvedActivities"].append({
+                      "activityObjectId": activity_oid,
+                      "activityName": activity_name,
+                      "definitionObjectId": definition_oid,
+                      "reason": (
+                          "No retrieved QueryDefinition has the same ObjectID."
+                      )
+                  })
+                  print(
+                      "Relationship: UNRESOLVED "
+                      "(no exact QueryDefinition ObjectID match)"
+                  )
+                  print("--------------------------------------------")
+                  continue
+
+              relationship = {
+                  "activity": {
+                      "objectId": activity_oid,
+                      "name": activity_name,
+                      "customerKey": activity.get("CustomerKey", ""),
+                      "sequence": activity.get("Sequence", ""),
+                      "taskObjectId": (
+                          activity.get("Task", {}).get("ObjectID", "")
+                      ),
+                      "definitionObjectId": definition_oid
+                  },
+                  "queryDefinition": {
+                      "objectId": query.get("ObjectID", ""),
+                      "customerKey": query.get("CustomerKey", ""),
+                      "name": query.get("Name", ""),
+                      "description": query.get("Description", ""),
+                      "queryText": query.get("QueryText", ""),
+                      "targetType": query.get("TargetType", ""),
+                      "targetUpdateType": query.get("TargetUpdateType", ""),
+                      "categoryId": query.get("CategoryID", ""),
+                      "status": query.get("Status", "")
+                  },
+                  "proof": {
+                      "matchType": "EXACT_OBJECT_ID",
+                      "activityDefinitionObjectId": definition_oid,
+                      "queryDefinitionObjectId": query.get("ObjectID", "")
+                  }
+              }
+
+              result["relationships"].append(relationship)
+              result["relationshipsResolved"] += 1
+
+              print("Matched Query ObjectID:", query.get("ObjectID", ""))
+              print("Query Name:", query.get("Name", ""))
+              print("Query CustomerKey:", query.get("CustomerKey", ""))
+              print("Relationship: EXACT_OBJECT_ID MATCH")
+              print("--------------------------------------------")
+
+          if result["unresolvedActivities"]:
+              result["status"] = "PARTIAL_OR_UNRESOLVED"
+              with open("query-relationship.json", "w", encoding="utf-8") as f:
+                  json.dump(result, f, indent=2, ensure_ascii=False)
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("relationship_status=PARTIAL_OR_UNRESOLVED\n")
+                  f.write(
+                      "relationship_count="
+                      + str(result["relationshipsResolved"])
+                      + "\n"
+                  )
+              raise SystemExit(
+                  "One or more Activities could not be resolved "
+                  "to QueryDefinition by exact ObjectID."
+              )
+
+          if not result["relationships"]:
+              result["status"] = "NO_QUERY_RELATIONSHIPS"
+              with open("query-relationship.json", "w", encoding="utf-8") as f:
+                  json.dump(result, f, indent=2, ensure_ascii=False)
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("relationship_status=NO_QUERY_RELATIONSHIPS\n")
+                  f.write("relationship_count=0\n")
+              raise SystemExit(
+                  "No exact Activity -> QueryDefinition relationships resolved."
+              )
+
+          result["status"] = "QUERY_RELATIONSHIPS_RESOLVED"
+
+          with open("query-relationship.json", "w", encoding="utf-8") as f:
+              json.dump(result, f, indent=2, ensure_ascii=False)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("relationship_status=QUERY_RELATIONSHIPS_RESOLVED\n")
+              f.write(
+                  "relationship_count="
+                  + str(result["relationshipsResolved"])
+                  + "\n"
+              )
+
+          print("")
+          print("RESULT: ACTIVITY -> QUERYDEFINITION RELATIONSHIP RESOLVED")
+          print("============================================")
+          PY
+
+
+      # 15. BUILD DEFINITION
       #
       # IMPORTANT:
       # Program discovery is recorded as discovery evidence only.
@@ -2748,7 +2960,7 @@ jobs:
 
 
       # ============================================================
-      # 15. SAVE RESULT
+      # 16. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -2834,6 +3046,11 @@ jobs:
             fi
           done
 
+          if [ -f query-relationship.json ]; then
+            cp query-relationship.json \
+              "$OUTPUT_DIR/query-relationship.json"
+          fi
+
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Saved to:"
@@ -2841,7 +3058,7 @@ jobs:
 
 
       # ============================================================
-      # 16. DISPLAY RESULT
+      # 17. DISPLAY RESULT
       # ============================================================
       - name: Display retrieved definition
         shell: bash
@@ -2923,9 +3140,20 @@ jobs:
               "$OUTPUT_DIR/activity-discovery.json"
           fi
 
+          if [ -f "$OUTPUT_DIR/query-relationship.json" ]; then
+
+            echo ""
+            echo "============================================"
+            echo "ACTIVITY -> QUERYDEFINITION RELATIONSHIP"
+            echo "============================================"
+
+            jq . \
+              "$OUTPUT_DIR/query-relationship.json"
+          fi
+
 
       # ============================================================
-      # 17. COMMIT
+      # 18. COMMIT
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -2959,7 +3187,7 @@ jobs:
 
 
       # ============================================================
-      # 18. FINAL RESULT
+      # 19. FINAL RESULT
       # ============================================================
       - name: Retrieval complete
         shell: bash
@@ -3070,6 +3298,18 @@ jobs:
           echo ""
           echo "Activities returned:"
           echo "${ACTIVITY_COUNT:-0}"
+
+          echo ""
+          echo "Activity -> QueryDefinition step outcome:"
+          echo "${QUERY_RELATIONSHIP_OUTCOME:-[not available]}"
+
+          echo ""
+          echo "Activity -> QueryDefinition status:"
+          echo "${QUERY_RELATIONSHIP_STATUS:-[not available]}"
+
+          echo ""
+          echo "Query relationships resolved:"
+          echo "${QUERY_RELATIONSHIP_COUNT:-0}"
 
           echo ""
           echo "IMPORTANT:"
