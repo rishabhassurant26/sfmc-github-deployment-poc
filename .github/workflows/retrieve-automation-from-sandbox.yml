@@ -183,7 +183,7 @@ jobs:
 
       # ============================================================
       # 6. RETRIEVE AUTOMATION METADATA
-      #    THIS IS THE ALREADY-PROVEN #5 LOGIC
+      #    PROVEN BASELINE - UNCHANGED
       # ============================================================
       - name: Retrieve existing Automation metadata
         id: automation
@@ -364,7 +364,7 @@ jobs:
 
       # ============================================================
       # 7. RETRIEVE QUERY DEFINITIONS
-      #    ALREADY-PROVEN #5 LOGIC
+      #    PROVEN BASELINE - UNCHANGED
       # ============================================================
       - name: Retrieve Sandbox QueryDefinitions
         id: queries
@@ -570,15 +570,390 @@ jobs:
 
 
       # ============================================================
-      # 8. NEW ISOLATED RELATIONSHIP DISCOVERY
+      # 8. PROVE API IDENTITY USING PRESERVED NEWOBJECTID
       #
-      # This step does NOT derive task/query keys from naming.
+      # TEMPORARY POC ONLY.
       #
-      # It asks SFMC for AutomationTask objects and records exactly
-      # what SFMC exposes.
+      # The ObjectID below came from the successful original
+      # SOAP Create response and was preserved in result.json.
       #
-      # Failure here does NOT alter the already-proven Automation
-      # and QueryDefinition retrieval logic.
+      # This step does NOT infer any Automation -> Task -> Query
+      # relationship.
+      # ============================================================
+      - name: Prove Automation identity using preserved NewObjectID
+        id: objectid_proof
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+
+          EXPECTED_AUTOMATION_NAME: ${{ inputs.automation_name }}
+          EXPECTED_CUSTOMER_KEY: ${{ steps.automation.outputs.customer_key }}
+
+          KNOWN_AUTOMATION_OBJECT_ID: "6d9e9be9-77a5-4ea5-931b-dad614ff9769"
+          EXPECTED_QUERY_OBJECT_ID: "42c239b1-af53-4d13-80ce-7ae7fd9937ec"
+
+        run: |
+          set -euo pipefail
+
+          export ACCESS_TOKEN
+          export SOAP_URL
+          export EXPECTED_AUTOMATION_NAME
+          export EXPECTED_CUSTOMER_KEY
+          export KNOWN_AUTOMATION_OBJECT_ID
+          export EXPECTED_QUERY_OBJECT_ID
+
+          python3 <<'PY'
+          import os
+          import html
+          import json
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+
+          expected_name = os.environ[
+              "EXPECTED_AUTOMATION_NAME"
+          ]
+
+          expected_customer_key = os.environ[
+              "EXPECTED_CUSTOMER_KEY"
+          ]
+
+          known_object_id = os.environ[
+              "KNOWN_AUTOMATION_OBJECT_ID"
+          ]
+
+          expected_query_object_id = os.environ[
+              "EXPECTED_QUERY_OBJECT_ID"
+          ]
+
+          def esc(value):
+              return html.escape(
+                  value or "",
+                  quote=True
+              )
+
+          body = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:et="http://exacttarget.com/wsdl/partnerAPI"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+            <soapenv:Header>
+              <fueloauth xmlns="http://exacttarget.com">
+                {esc(token)}
+              </fueloauth>
+            </soapenv:Header>
+
+            <soapenv:Body>
+
+              <et:RetrieveRequestMsg>
+
+                <et:RetrieveRequest>
+
+                  <et:ObjectType>
+                    Automation
+                  </et:ObjectType>
+
+                  <et:Properties>ObjectID</et:Properties>
+                  <et:Properties>CustomerKey</et:Properties>
+                  <et:Properties>Name</et:Properties>
+                  <et:Properties>Description</et:Properties>
+                  <et:Properties>Status</et:Properties>
+                  <et:Properties>IsActive</et:Properties>
+                  <et:Properties>CreatedDate</et:Properties>
+                  <et:Properties>ModifiedDate</et:Properties>
+
+                  <et:Filter
+                    xsi:type="et:SimpleFilterPart">
+
+                    <et:Property>
+                      ObjectID
+                    </et:Property>
+
+                    <et:SimpleOperator>
+                      equals
+                    </et:SimpleOperator>
+
+                    <et:Value>
+                      {esc(known_object_id)}
+                    </et:Value>
+
+                  </et:Filter>
+
+                </et:RetrieveRequest>
+
+              </et:RetrieveRequestMsg>
+
+            </soapenv:Body>
+
+          </soapenv:Envelope>
+          """
+
+          request = urllib.request.Request(
+              soap_url + "/Service.asmx",
+              data=body.encode("utf-8"),
+              headers={
+                  "Content-Type":
+                      "text/xml; charset=UTF-8",
+                  "SOAPAction":
+                      "Retrieve"
+              },
+              method="POST"
+          )
+
+          try:
+
+              with urllib.request.urlopen(
+                  request
+              ) as response:
+
+                  xml_data = response.read()
+
+          except urllib.error.HTTPError as exc:
+
+              response_text = exc.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+
+              print(response_text)
+
+              raise SystemExit(
+                  f"Automation ObjectID Retrieve HTTP "
+                  f"{exc.code}"
+              )
+
+          with open(
+              "automation-objectid-response.xml",
+              "wb"
+          ) as f:
+
+              f.write(xml_data)
+
+          root = ET.fromstring(xml_data)
+
+          overall = ""
+          results = []
+
+          for element in root.iter():
+
+              local = (
+                  element.tag
+                  .split("}")[-1]
+              )
+
+              if local == "OverallStatus":
+
+                  overall = (
+                      element.text or ""
+                  ).strip()
+
+              elif local == "Results":
+
+                  current = {}
+
+                  for child in list(element):
+
+                      key = (
+                          child.tag
+                          .split("}")[-1]
+                      )
+
+                      current[key] = (
+                          child.text or ""
+                      ).strip()
+
+                  if (
+                      current.get("Name")
+                      or current.get("CustomerKey")
+                      or current.get("ObjectID")
+                  ):
+
+                      results.append(
+                          current
+                      )
+
+          print("")
+          print("============================================")
+          print("AUTOMATION PRESERVED NEWOBJECTID PROOF")
+          print("============================================")
+          print("SOAP Status:", overall)
+          print("Requested ObjectID:", known_object_id)
+
+          if overall not in (
+              "OK",
+              "MoreDataAvailable"
+          ):
+
+              raise SystemExit(
+                  "Automation ObjectID Retrieve returned: "
+                  + overall
+              )
+
+          if len(results) != 1:
+
+              raise SystemExit(
+                  "Expected exactly one Automation for "
+                  "the preserved NewObjectID; SFMC "
+                  f"returned {len(results)}."
+              )
+
+          automation = results[0]
+
+          returned_name = (
+              automation.get(
+                  "Name",
+                  ""
+              )
+          )
+
+          returned_customer_key = (
+              automation.get(
+                  "CustomerKey",
+                  ""
+              )
+          )
+
+          returned_object_id = (
+              automation.get(
+                  "ObjectID",
+                  ""
+              )
+          )
+
+          print(
+              "Returned Name:",
+              returned_name
+          )
+
+          print(
+              "Returned CustomerKey:",
+              returned_customer_key
+          )
+
+          print(
+              "Returned ObjectID:",
+              returned_object_id
+              or "[not returned]"
+          )
+
+          if returned_name != expected_name:
+
+              raise SystemExit(
+                  "ObjectID resolved to a different "
+                  "Automation name."
+              )
+
+          if (
+              returned_customer_key
+              != expected_customer_key
+          ):
+
+              raise SystemExit(
+                  "ObjectID resolved to a different "
+                  "Automation CustomerKey."
+              )
+
+          proof = {
+
+              "status":
+                  "IDENTITY_PROVEN",
+
+              "requestedObjectId":
+                  known_object_id,
+
+              "expectedAutomation": {
+
+                  "name":
+                      expected_name,
+
+                  "customerKey":
+                      expected_customer_key
+              },
+
+              "returnedAutomation":
+                  automation,
+
+              "expectedQueryEvidence": {
+
+                  "objectId":
+                      expected_query_object_id,
+
+                  "relationshipStatus":
+                      "NOT_YET_PROVEN"
+              },
+
+              "conclusion":
+                  (
+                      "The preserved SOAP Create "
+                      "NewObjectID resolved to the same "
+                      "Automation independently retrieved "
+                      "by Name and CustomerKey. "
+                      "No task/query relationship has "
+                      "been inferred."
+                  )
+          }
+
+          with open(
+              "automation-objectid-proof.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              json.dump(
+                  proof,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a"
+          ) as f:
+
+              f.write(
+                  "identity_proven=true\n"
+              )
+
+              f.write(
+                  "known_object_id="
+                  + known_object_id
+                  + "\n"
+              )
+
+          print("")
+          print(
+              "RESULT: AUTOMATION API IDENTITY PROVEN"
+          )
+
+          print(
+              "ObjectID -> Name -> CustomerKey "
+              "cross-check passed."
+          )
+
+          print(
+              "No Automation-to-Task or "
+              "Automation-to-Query relationship "
+              "has been guessed."
+          )
+
+          print(
+              "============================================"
+          )
+
+          PY
+
+
+      # ============================================================
+      # 9. ISOLATED AUTOMATIONTASK DISCOVERY
+      #
+      # Existing discovery logic retained.
+      # No generated task/query naming relationship is assumed.
       # ============================================================
       - name: Discover AutomationTask relationship
         id: task_discovery
@@ -732,9 +1107,6 @@ jobs:
                   ensure_ascii=False
               )
 
-          # We deliberately do not match by generated naming pattern.
-          # This phase only records what SFMC actually returns.
-
           status = (
               "DISCOVERED"
               if tasks
@@ -771,7 +1143,7 @@ jobs:
 
 
       # ============================================================
-      # 9. BUILD DEFINITION
+      # 10. BUILD DEFINITION
       # ============================================================
       - name: Build Automation retrieval definition
         shell: bash
@@ -779,10 +1151,16 @@ jobs:
           LOB: ${{ steps.config.outputs.lob }}
           SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
           TASK_STEP_OUTCOME: ${{ steps.task_discovery.outcome }}
+          OBJECTID_IDENTITY_PROVEN: ${{ steps.objectid_proof.outputs.identity_proven }}
+          PRESERVED_OBJECT_ID: ${{ steps.objectid_proof.outputs.known_object_id }}
         run: |
           set -euo pipefail
 
-          export LOB SANDBOX_MID TASK_STEP_OUTCOME
+          export LOB
+          export SANDBOX_MID
+          export TASK_STEP_OUTCOME
+          export OBJECTID_IDENTITY_PROVEN
+          export PRESERVED_OBJECT_ID
 
           python3 <<'PY'
           import os
@@ -828,6 +1206,20 @@ jobs:
               )
           )
 
+          objectid_identity_proven = (
+              os.environ.get(
+                  "OBJECTID_IDENTITY_PROVEN",
+                  ""
+              ).lower() == "true"
+          )
+
+          preserved_object_id = (
+              os.environ.get(
+                  "PRESERVED_OBJECT_ID",
+                  ""
+              )
+          )
+
           if tasks:
 
               relationship_status = (
@@ -856,7 +1248,7 @@ jobs:
           definition = {
 
               "schemaVersion":
-                  "1.1",
+                  "1.2",
 
               "assetType":
                   "automation",
@@ -918,7 +1310,13 @@ jobs:
                       bool(customer_key),
 
                   "objectIdReturned":
-                      bool(object_id)
+                      bool(object_id),
+
+                  "preservedCreateObjectId":
+                      preserved_object_id,
+
+                  "preservedObjectIdIdentityProven":
+                      objectid_identity_proven
               },
 
               "discovery": {
@@ -968,8 +1366,16 @@ jobs:
               customer_key
           )
           print(
-              "ObjectID:",
+              "ObjectID returned by current Retrieve:",
               object_id or "[not returned]"
+          )
+          print(
+              "Preserved Create ObjectID:",
+              preserved_object_id or "[not available]"
+          )
+          print(
+              "Preserved ObjectID identity proven:",
+              objectid_identity_proven
           )
           print(
               "QueryDefinitions:",
@@ -988,7 +1394,7 @@ jobs:
 
 
       # ============================================================
-      # 10. SAVE RESULT
+      # 11. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -1019,6 +1425,11 @@ jobs:
               "$OUTPUT_DIR/automation-tasks.json"
           fi
 
+          if [ -f automation-objectid-proof.json ]; then
+            cp automation-objectid-proof.json \
+              "$OUTPUT_DIR/automation-objectid-proof.json"
+          fi
+
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Saved to:"
@@ -1026,7 +1437,7 @@ jobs:
 
 
       # ============================================================
-      # 11. DISPLAY RESULT
+      # 12. DISPLAY RESULT
       # ============================================================
       - name: Display retrieved definition
         shell: bash
@@ -1035,9 +1446,26 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo ""
+          echo "============================================"
+          echo "RETRIEVED DEFINITION"
+          echo "============================================"
+
           jq . "$OUTPUT_DIR/definition.json"
 
+          if [ -f "$OUTPUT_DIR/automation-objectid-proof.json" ]; then
+
+            echo ""
+            echo "============================================"
+            echo "AUTOMATION OBJECTID PROOF"
+            echo "============================================"
+
+            jq . \
+              "$OUTPUT_DIR/automation-objectid-proof.json"
+          fi
+
           if [ -f "$OUTPUT_DIR/automation-tasks.json" ]; then
+
             echo ""
             echo "============================================"
             echo "AUTOMATION TASK DISCOVERY"
@@ -1048,7 +1476,7 @@ jobs:
 
 
       # ============================================================
-      # 12. COMMIT
+      # 13. COMMIT
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -1082,7 +1510,7 @@ jobs:
 
 
       # ============================================================
-      # 13. FINAL RESULT
+      # 14. FINAL RESULT
       # ============================================================
       - name: Retrieval complete
         shell: bash
@@ -1090,9 +1518,15 @@ jobs:
           AUTOMATION_NAME: ${{ inputs.automation_name }}
           CUSTOMER_KEY: ${{ steps.automation.outputs.customer_key }}
           OBJECT_ID: ${{ steps.automation.outputs.object_id }}
+
           QUERY_COUNT: ${{ steps.queries.outputs.query_count }}
+
+          OBJECTID_PROOF: ${{ steps.objectid_proof.outputs.identity_proven }}
+          KNOWN_OBJECT_ID: ${{ steps.objectid_proof.outputs.known_object_id }}
+
           TASK_OUTCOME: ${{ steps.task_discovery.outcome }}
           TASK_COUNT: ${{ steps.task_discovery.outputs.task_count }}
+
         run: |
           set -euo pipefail
 
@@ -1110,8 +1544,16 @@ jobs:
           echo "$CUSTOMER_KEY"
 
           echo ""
-          echo "ObjectID:"
+          echo "ObjectID returned by current name-based Retrieve:"
           echo "${OBJECT_ID:-[not returned]}"
+
+          echo ""
+          echo "Preserved Automation ObjectID:"
+          echo "${KNOWN_OBJECT_ID:-[not available]}"
+
+          echo ""
+          echo "Preserved NewObjectID identity proof:"
+          echo "${OBJECTID_PROOF:-false}"
 
           echo ""
           echo "QueryDefinitions retrieved:"
@@ -1127,7 +1569,8 @@ jobs:
 
           echo ""
           echo "IMPORTANT:"
-          echo "No task/query relationship has been guessed."
+          echo "Automation API identity and relationship proof are separate."
+          echo "No Automation -> Task -> Query relationship has been guessed."
 
           echo ""
           echo "=================================================="
