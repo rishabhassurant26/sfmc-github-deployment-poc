@@ -1,0 +1,20 @@
+{
+  "status": "TASKS_RESOLVED",
+  "soapStatus": "OK",
+  "requestId": "9d8d1471-825d-4d93-bcc3-d878e4b6f885",
+  "programObjectId": "6d9e9be9-77a5-4ea5-931b-dad614ff9769",
+  "tasksReturned": 1,
+  "tasks": [
+    {
+      "PartnerKey": "",
+      "ObjectID": "17f8d090-a69b-49d7-b3b1-058ce1e6908b",
+      "Name": "Step 1 - Active Customer Query",
+      "Description": "",
+      "Program": {
+        "PartnerKey": "",
+        "ObjectID": "6d9e9be9-77a5-4ea5-931b-dad614ff9769"
+      },
+      "Sequence": "0"
+    }
+  ]
+}

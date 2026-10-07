@@ -1,0 +1,119 @@
+{
+  "soapStatus": "",
+  "requestId": "7b0d4712-8ab8-4fd1-8e4c-63e1119db29b",
+  "objectType": "Task",
+  "propertyCount": 24,
+  "retrievablePropertyCount": 12,
+  "retrievableProperties": [
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "ObjectID",
+      "DataType": "String",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "IsRequired": "true"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Program.ObjectID",
+      "DataType": "Guid",
+      "IsUpdatable": "true",
+      "IsRetrievable": "true",
+      "IsRequired": "true"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Name",
+      "DataType": "String",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "MaxLength": "255",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Description",
+      "DataType": "String",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "MaxLength": "255",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Sequence",
+      "DataType": "Int32",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "IsRequired": "true"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Client.ID",
+      "DataType": "Int64",
+      "IsUpdatable": "true",
+      "IsRetrievable": "true",
+      "IsRequired": "true"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Client.UserID",
+      "DataType": "Int64",
+      "IsUpdatable": "true",
+      "IsRetrievable": "true",
+      "IsRequired": "true"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "CreatedDate",
+      "DataType": "DateTime",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "IsRequired": "true"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Client.CreatedBy",
+      "DataType": "Int64",
+      "IsUpdatable": "true",
+      "IsRetrievable": "true",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "ModifiedDate",
+      "DataType": "DateTime",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "IsRequired": "true"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Client.ModifiedBy",
+      "DataType": "Int64",
+      "IsUpdatable": "true",
+      "IsRetrievable": "true",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Client.EnterpriseID",
+      "DataType": "Int64",
+      "IsUpdatable": "true",
+      "IsRetrievable": "true",
+      "IsRequired": "false"
+    }
+  ]
+}
