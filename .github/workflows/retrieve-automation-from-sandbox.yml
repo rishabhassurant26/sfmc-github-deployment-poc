@@ -39,42 +39,41 @@ jobs:
 
           CONFIG_FILE="config/lob-config.json"
 
-          if [ ! -f "$CONFIG_FILE" ]; then
+          [ -f "$CONFIG_FILE" ] || {
             echo "ERROR: $CONFIG_FILE not found."
             exit 1
-          fi
+          }
 
           LOB=$(jq -r '.lineOfBusiness // empty' "$CONFIG_FILE")
           ASSET_ROOT=$(jq -r '.assetRoot // empty' "$CONFIG_FILE")
           SANDBOX_MID=$(jq -r '.environments.sandbox.businessUnitMid // empty' "$CONFIG_FILE")
-
           AUTOMATIONS_ENABLED=$(jq -r '.assetTypes.automations.enabled // false' "$CONFIG_FILE")
           AUTOMATIONS_DIR=$(jq -r '.assetTypes.automations.directory // empty' "$CONFIG_FILE")
 
-          if [ -z "$LOB" ]; then
+          [ -n "$LOB" ] || {
             echo "ERROR: lineOfBusiness missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$ASSET_ROOT" ]; then
+          [ -n "$ASSET_ROOT" ] || {
             echo "ERROR: assetRoot missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$SANDBOX_MID" ]; then
+          [ -n "$SANDBOX_MID" ] || {
             echo "ERROR: Sandbox MID missing."
             exit 1
-          fi
+          }
 
-          if [ "$AUTOMATIONS_ENABLED" != "true" ]; then
-            echo "ERROR: Automation retrieval is disabled in config."
+          [ "$AUTOMATIONS_ENABLED" = "true" ] || {
+            echo "ERROR: Automation retrieval disabled in config."
             exit 1
-          fi
+          }
 
-          if [ -z "$AUTOMATIONS_DIR" ]; then
+          [ -n "$AUTOMATIONS_DIR" ] || {
             echo "ERROR: Automation directory missing."
             exit 1
-          fi
+          }
 
           echo "lob=$LOB" >> "$GITHUB_OUTPUT"
           echo "asset_root=$ASSET_ROOT" >> "$GITHUB_OUTPUT"
@@ -82,8 +81,6 @@ jobs:
           echo "automations_dir=$AUTOMATIONS_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Configuration validated."
-          echo "LOB: $LOB"
-          echo "Sandbox MID: $SANDBOX_MID"
 
 
       # ============================================================
@@ -96,10 +93,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "$AUTOMATION_NAME" ]; then
+          [ -n "$AUTOMATION_NAME" ] || {
             echo "ERROR: Automation name is required."
             exit 1
-          fi
+          }
 
           echo "Automation requested:"
           echo "$AUTOMATION_NAME"
@@ -117,26 +114,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "$AUTH_BASE_URI" ]; then
+          [ -n "$AUTH_BASE_URI" ] || {
             echo "ERROR: SFMC_AUTH_BASE_URI missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$CLIENT_ID" ]; then
+          [ -n "$CLIENT_ID" ] || {
             echo "ERROR: SFMC_CLIENT_ID missing."
             exit 1
-          fi
+          }
 
-          if [ -z "$CLIENT_SECRET" ]; then
+          [ -n "$CLIENT_SECRET" ] || {
             echo "ERROR: SFMC_CLIENT_SECRET missing."
             exit 1
-          fi
+          }
 
           echo "Required secrets are available."
 
 
       # ============================================================
-      # 5. AUTHENTICATE TO SANDBOX
+      # 5. AUTHENTICATE
       # ============================================================
       - name: Authenticate to SFMC Sandbox
         id: auth
@@ -166,15 +163,15 @@ jobs:
           ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
           SOAP_URL=$(echo "$TOKEN_RESPONSE" | jq -r '.soap_instance_url // empty')
 
-          if [ -z "$ACCESS_TOKEN" ]; then
+          [ -n "$ACCESS_TOKEN" ] || {
             echo "ERROR: Access token not returned."
             exit 1
-          fi
+          }
 
-          if [ -z "$SOAP_URL" ]; then
+          [ -n "$SOAP_URL" ] || {
             echo "ERROR: SOAP URL not returned."
             exit 1
-          fi
+          }
 
           echo "::add-mask::$ACCESS_TOKEN"
 
@@ -185,10 +182,8 @@ jobs:
 
 
       # ============================================================
-      # 6. RETRIEVE EXISTING AUTOMATION METADATA
-      #
-      # ObjectID is optional.
-      # CustomerKey is required.
+      # 6. RETRIEVE AUTOMATION METADATA
+      #    THIS IS THE ALREADY-PROVEN #5 LOGIC
       # ============================================================
       - name: Retrieve existing Automation metadata
         id: automation
@@ -228,9 +223,7 @@ jobs:
             </soapenv:Header>
 
             <soapenv:Body>
-
               <et:RetrieveRequestMsg>
-
                 <et:RetrieveRequest>
 
                   <et:ObjectType>Automation</et:ObjectType>
@@ -251,9 +244,7 @@ jobs:
                   </et:Filter>
 
                 </et:RetrieveRequest>
-
               </et:RetrieveRequestMsg>
-
             </soapenv:Body>
 
           </soapenv:Envelope>
@@ -274,28 +265,15 @@ jobs:
                   xml_data = response.read()
 
           except urllib.error.HTTPError as exc:
-              error_body = exc.read().decode(
-                  "utf-8",
-                  errors="replace"
+              print(
+                  exc.read().decode(
+                      "utf-8",
+                      errors="replace"
+                  )
               )
-
-              print(error_body)
-
               raise SystemExit(
-                  f"Automation SOAP Retrieve failed "
-                  f"with HTTP {exc.code}."
+                  f"Automation Retrieve HTTP {exc.code}"
               )
-
-          except Exception as exc:
-              raise SystemExit(
-                  f"Automation SOAP Retrieve failed: {exc}"
-              )
-
-          with open(
-              "automation-response.xml",
-              "wb"
-          ) as f:
-              f.write(xml_data)
 
           root = ET.fromstring(xml_data)
 
@@ -309,24 +287,20 @@ jobs:
               if local == "OverallStatus":
                   overall = (element.text or "").strip()
 
-              if local != "Results":
-                  continue
+              elif local == "Results":
 
-              current = {}
+                  current = {}
 
-              for child in list(element):
-                  key = child.tag.split("}")[-1]
-                  current[key] = (
-                      child.text or ""
-                  ).strip()
+                  for child in list(element):
+                      key = child.tag.split("}")[-1]
+                      current[key] = (
+                          child.text or ""
+                      ).strip()
 
-              if current.get("Name"):
-                  results.append(current)
+                  if current.get("Name"):
+                      results.append(current)
 
-          if overall not in (
-              "OK",
-              "MoreDataAvailable"
-          ):
+          if overall not in ("OK", "MoreDataAvailable"):
               raise SystemExit(
                   "Automation Retrieve returned status: "
                   + overall
@@ -338,76 +312,20 @@ jobs:
               if item.get("Name") == automation_name
           ]
 
-          if not exact:
+          if len(exact) != 1:
               raise SystemExit(
-                  "Existing Sandbox Automation was not found."
-              )
-
-          if len(exact) > 1:
-              raise SystemExit(
-                  "More than one Automation matched the exact "
-                  "name. Retrieval stopped to avoid ambiguity."
+                  "Automation exact-name lookup did not "
+                  "return exactly one result."
               )
 
           automation = exact[0]
 
-          object_id = automation.get(
-              "ObjectID",
-              ""
-          )
-
-          customer_key = automation.get(
-              "CustomerKey",
-              ""
-          )
-
-          print("")
-          print("============================================")
-          print("EXISTING SANDBOX AUTOMATION FOUND")
-          print("============================================")
-          print(
-              "Name:",
-              automation.get("Name", "")
-          )
-          print(
-              "CustomerKey:",
-              customer_key
-          )
-          print(
-              "ObjectID:",
-              object_id or "[not returned by SFMC]"
-          )
-          print(
-              "Status:",
-              automation.get("Status", "")
-          )
-          print("============================================")
+          customer_key = automation.get("CustomerKey", "")
+          object_id = automation.get("ObjectID", "")
 
           if not customer_key:
               raise SystemExit(
-                  "Automation was found but CustomerKey "
-                  "was not returned."
-              )
-
-          if not object_id:
-              print("")
-              print(
-                  "INFO: SFMC did not return ObjectID "
-                  "for this Automation."
-              )
-              print(
-                  "Continuing with SFMC-returned CustomerKey."
-              )
-
-          with open(
-              os.environ["GITHUB_OUTPUT"],
-              "a"
-          ) as f:
-              f.write(
-                  f"object_id={object_id}\n"
-              )
-              f.write(
-                  f"customer_key={customer_key}\n"
+                  "Automation CustomerKey not returned."
               )
 
           with open(
@@ -422,24 +340,31 @@ jobs:
                   ensure_ascii=False
               )
 
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a"
+          ) as f:
+              f.write(f"customer_key={customer_key}\n")
+              f.write(f"object_id={object_id}\n")
+
           print("")
+          print("============================================")
+          print("AUTOMATION FOUND")
+          print("============================================")
+          print("Name:", automation.get("Name", ""))
+          print("CustomerKey:", customer_key)
           print(
-              "Automation identity successfully resolved."
+              "ObjectID:",
+              object_id or "[not returned]"
           )
+          print("Status:", automation.get("Status", ""))
+          print("============================================")
           PY
 
 
       # ============================================================
-      # 7. RETRIEVE SANDBOX QUERY DEFINITIONS
-      #
-      # IMPORTANT:
-      #
-      # DataExtensionTarget.* nested properties are deliberately
-      # NOT requested.
-      #
-      # Current SFMC live response proved that
-      # DataExtensionTarget.ObjectID does not match the fields
-      # available for QueryDefinition Retrieve.
+      # 7. RETRIEVE QUERY DEFINITIONS
+      #    ALREADY-PROVEN #5 LOGIC
       # ============================================================
       - name: Retrieve Sandbox QueryDefinitions
         id: queries
@@ -462,8 +387,6 @@ jobs:
           token = os.environ["ACCESS_TOKEN"]
           soap_url = os.environ["SOAP_URL"].rstrip("/")
 
-          # Only QueryDefinition properties accepted by this
-          # retrieval phase are requested here.
           properties = [
               "ObjectID",
               "CustomerKey",
@@ -476,13 +399,11 @@ jobs:
               "ModifiedDate"
           ]
 
-          def soap_retrieve(
-              continue_request=None
-          ):
+          def retrieve_page(continue_request=None):
 
               if continue_request:
 
-                  retrieve_body = f"""
+                  request_content = f"""
                   <et:RetrieveRequest>
                     <et:ContinueRequest>{continue_request}</et:ContinueRequest>
                   </et:RetrieveRequest>
@@ -495,7 +416,7 @@ jobs:
                       for p in properties
                   )
 
-                  retrieve_body = f"""
+                  request_content = f"""
                   <et:RetrieveRequest>
 
                     <et:ObjectType>
@@ -517,13 +438,9 @@ jobs:
                 </soapenv:Header>
 
                 <soapenv:Body>
-
                   <et:RetrieveRequestMsg>
-
-                    {retrieve_body}
-
+                    {request_content}
                   </et:RetrieveRequestMsg>
-
                 </soapenv:Body>
 
               </soapenv:Envelope>
@@ -548,36 +465,30 @@ jobs:
                       return response.read()
 
               except urllib.error.HTTPError as exc:
-
-                  error_body = exc.read().decode(
-                      "utf-8",
-                      errors="replace"
+                  print(
+                      exc.read().decode(
+                          "utf-8",
+                          errors="replace"
+                      )
                   )
-
-                  print(error_body)
-
                   raise SystemExit(
-                      f"QueryDefinition Retrieve failed "
-                      f"with HTTP {exc.code}."
+                      f"QueryDefinition Retrieve HTTP "
+                      f"{exc.code}"
                   )
 
           all_queries = []
-
           continue_request = None
 
           while True:
 
-              xml_data = soap_retrieve(
+              xml_data = retrieve_page(
                   continue_request
               )
 
-              root = ET.fromstring(
-                  xml_data
-              )
+              root = ET.fromstring(xml_data)
 
               overall = ""
               request_id = ""
-
               page_queries = []
 
               for element in root.iter():
@@ -599,9 +510,7 @@ jobs:
                       current = {}
 
                       for child in list(element):
-
                           key = child.tag.split("}")[-1]
-
                           current[key] = (
                               child.text or ""
                           ).strip()
@@ -610,36 +519,25 @@ jobs:
                           current.get("ObjectID")
                           or current.get("CustomerKey")
                       ):
-                          page_queries.append(
-                              current
-                          )
+                          page_queries.append(current)
 
-              all_queries.extend(
-                  page_queries
-              )
+              all_queries.extend(page_queries)
 
               if overall not in (
                   "OK",
                   "MoreDataAvailable"
               ):
                   raise SystemExit(
-                      "QueryDefinition Retrieve returned "
-                      "status: "
+                      "QueryDefinition Retrieve returned: "
                       + overall
                   )
-
-              print(
-                  "QueryDefinition page retrieved:",
-                  len(page_queries)
-              )
 
               if overall != "MoreDataAvailable":
                   break
 
               if not request_id:
                   raise SystemExit(
-                      "SFMC returned MoreDataAvailable "
-                      "without RequestID."
+                      "MoreDataAvailable without RequestID."
                   )
 
               continue_request = request_id
@@ -656,16 +554,6 @@ jobs:
                   ensure_ascii=False
               )
 
-          print("")
-          print("============================================")
-          print("SANDBOX QUERY DEFINITIONS RETRIEVED")
-          print("============================================")
-          print(
-              "Count:",
-              len(all_queries)
-          )
-          print("============================================")
-
           with open(
               os.environ["GITHUB_OUTPUT"],
               "a"
@@ -673,28 +561,228 @@ jobs:
               f.write(
                   f"query_count={len(all_queries)}\n"
               )
+
+          print(
+              "QueryDefinitions retrieved:",
+              len(all_queries)
+          )
           PY
 
 
       # ============================================================
-      # 8. BUILD SAFE AUTOMATION RETRIEVAL DEFINITION
+      # 8. NEW ISOLATED RELATIONSHIP DISCOVERY
       #
-      # We have:
-      # - real Automation metadata
-      # - real Automation CustomerKey
-      # - all retrievable QueryDefinitions
+      # This step does NOT derive task/query keys from naming.
       #
-      # But no Automation -> Query relationship is guessed.
+      # It asks SFMC for AutomationTask objects and records exactly
+      # what SFMC exposes.
+      #
+      # Failure here does NOT alter the already-proven Automation
+      # and QueryDefinition retrieval logic.
+      # ============================================================
+      - name: Discover AutomationTask relationship
+        id: task_discovery
+        continue-on-error: true
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+          AUTOMATION_CUSTOMER_KEY: ${{ steps.automation.outputs.customer_key }}
+        run: |
+          set -euo pipefail
+
+          export ACCESS_TOKEN SOAP_URL AUTOMATION_CUSTOMER_KEY
+
+          python3 <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+          automation_key = os.environ["AUTOMATION_CUSTOMER_KEY"]
+
+          # Do not infer ${automation_key}_TASK.
+          # Retrieve actual AutomationTask objects exposed by SFMC.
+
+          properties = [
+              "ObjectID",
+              "CustomerKey",
+              "Name",
+              "Sequence",
+              "AutomationTaskType"
+          ]
+
+          props = "\n".join(
+              f"<et:Properties>{p}</et:Properties>"
+              for p in properties
+          )
+
+          body = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:et="http://exacttarget.com/wsdl/partnerAPI">
+
+            <soapenv:Header>
+              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
+            </soapenv:Header>
+
+            <soapenv:Body>
+
+              <et:RetrieveRequestMsg>
+
+                <et:RetrieveRequest>
+
+                  <et:ObjectType>
+                    AutomationTask
+                  </et:ObjectType>
+
+                  {props}
+
+                </et:RetrieveRequest>
+
+              </et:RetrieveRequestMsg>
+
+            </soapenv:Body>
+
+          </soapenv:Envelope>
+          """
+
+          request = urllib.request.Request(
+              soap_url + "/Service.asmx",
+              data=body.encode("utf-8"),
+              headers={
+                  "Content-Type":
+                      "text/xml; charset=UTF-8",
+                  "SOAPAction":
+                      "Retrieve"
+              },
+              method="POST"
+          )
+
+          try:
+
+              with urllib.request.urlopen(
+                  request
+              ) as response:
+                  xml_data = response.read()
+
+          except urllib.error.HTTPError as exc:
+
+              response_text = exc.read().decode(
+                  "utf-8",
+                  errors="replace"
+              )
+
+              print(response_text)
+
+              raise SystemExit(
+                  f"AutomationTask Retrieve HTTP "
+                  f"{exc.code}"
+              )
+
+          root = ET.fromstring(xml_data)
+
+          overall = ""
+          tasks = []
+
+          for element in root.iter():
+
+              local = element.tag.split("}")[-1]
+
+              if local == "OverallStatus":
+                  overall = (
+                      element.text or ""
+                  ).strip()
+
+              elif local == "Results":
+
+                  task = {}
+
+                  for child in list(element):
+
+                      key = child.tag.split("}")[-1]
+
+                      task[key] = (
+                          child.text or ""
+                      ).strip()
+
+                  if task:
+                      tasks.append(task)
+
+          print("")
+          print("============================================")
+          print("AUTOMATION TASK DISCOVERY")
+          print("============================================")
+          print("SOAP Status:", overall)
+          print("Tasks returned:", len(tasks))
+          print("============================================")
+
+          with open(
+              "automation-tasks.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  tasks,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          # We deliberately do not match by generated naming pattern.
+          # This phase only records what SFMC actually returns.
+
+          status = (
+              "DISCOVERED"
+              if tasks
+              else "NOT_RETURNED"
+          )
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a"
+          ) as f:
+              f.write(
+                  f"relationship_status={status}\n"
+              )
+              f.write(
+                  f"task_count={len(tasks)}\n"
+              )
+
+          if tasks:
+              print("")
+              print(
+                  "AutomationTask objects were returned "
+                  "by SFMC."
+              )
+              print(
+                  "No task has been assigned to the "
+                  "Automation without relationship proof."
+              )
+          else:
+              print(
+                  "SFMC returned no AutomationTask "
+                  "objects."
+              )
+          PY
+
+
+      # ============================================================
+      # 9. BUILD DEFINITION
       # ============================================================
       - name: Build Automation retrieval definition
         shell: bash
         env:
           LOB: ${{ steps.config.outputs.lob }}
           SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
+          TASK_STEP_OUTCOME: ${{ steps.task_discovery.outcome }}
         run: |
           set -euo pipefail
 
-          export LOB SANDBOX_MID
+          export LOB SANDBOX_MID TASK_STEP_OUTCOME
 
           python3 <<'PY'
           import os
@@ -712,26 +800,63 @@ jobs:
           ) as f:
               queries = json.load(f)
 
-          automation_object_id = (
-              automation.get(
-                  "ObjectID",
-                  ""
-              )
+          tasks = []
+
+          if os.path.exists(
+              "automation-tasks.json"
+          ):
+              with open(
+                  "automation-tasks.json",
+                  encoding="utf-8"
+              ) as f:
+                  tasks = json.load(f)
+
+          customer_key = (
+              automation.get("CustomerKey", "")
               or ""
           )
 
-          automation_customer_key = (
-              automation.get(
-                  "CustomerKey",
-                  ""
-              )
+          object_id = (
+              automation.get("ObjectID", "")
               or ""
           )
+
+          task_discovery_outcome = (
+              os.environ.get(
+                  "TASK_STEP_OUTCOME",
+                  ""
+              )
+          )
+
+          if tasks:
+
+              relationship_status = (
+                  "TASK_OBJECTS_DISCOVERED"
+              )
+
+              relationship_reason = (
+                  "SFMC returned AutomationTask objects. "
+                  "No AutomationTask has yet been assigned "
+                  "to this Automation without an explicit "
+                  "SFMC-returned parent relationship."
+              )
+
+          else:
+
+              relationship_status = "UNRESOLVED"
+
+              relationship_reason = (
+                  "Automation and QueryDefinition metadata "
+                  "were retrieved successfully, but SFMC "
+                  "did not provide enough relationship "
+                  "evidence to associate a task/query with "
+                  "this Automation."
+              )
 
           definition = {
 
               "schemaVersion":
-                  "1.0",
+                  "1.1",
 
               "assetType":
                   "automation",
@@ -748,16 +873,13 @@ jobs:
               "automation": {
 
                   "name":
-                      automation.get(
-                          "Name",
-                          ""
-                      ),
+                      automation.get("Name", ""),
 
                   "customerKey":
-                      automation_customer_key,
+                      customer_key,
 
                   "objectId":
-                      automation_object_id,
+                      object_id,
 
                   "description":
                       automation.get(
@@ -793,33 +915,31 @@ jobs:
               "identity": {
 
                   "customerKeyResolved":
-                      bool(
-                          automation_customer_key
-                      ),
+                      bool(customer_key),
 
                   "objectIdReturned":
-                      bool(
-                          automation_object_id
-                      )
-              },
-
-              "relationships": {
-
-                  "status":
-                      "UNRESOLVED",
-
-                  "reason":
-                      "Automation metadata and "
-                      "QueryDefinitions were retrieved "
-                      "from SFMC independently. No "
-                      "Automation-to-Query relationship "
-                      "has been guessed."
+                      bool(object_id)
               },
 
               "discovery": {
 
                   "queryDefinitionsRetrieved":
-                      len(queries)
+                      len(queries),
+
+                  "automationTasksReturned":
+                      len(tasks),
+
+                  "automationTaskDiscoveryOutcome":
+                      task_discovery_outcome
+              },
+
+              "relationships": {
+
+                  "status":
+                      relationship_status,
+
+                  "reason":
+                      relationship_reason
               }
           }
 
@@ -828,7 +948,6 @@ jobs:
               "w",
               encoding="utf-8"
           ) as f:
-
               json.dump(
                   definition,
                   f,
@@ -840,47 +959,36 @@ jobs:
           print("============================================")
           print("AUTOMATION RETRIEVAL RESULT")
           print("============================================")
-
           print(
               "Automation:",
-              definition[
-                  "automation"
-              ]["name"]
+              definition["automation"]["name"]
           )
-
           print(
               "CustomerKey:",
-              definition[
-                  "automation"
-              ]["customerKey"]
+              customer_key
           )
-
           print(
               "ObjectID:",
-              definition[
-                  "automation"
-              ]["objectId"]
-              or "[not returned]"
+              object_id or "[not returned]"
           )
-
           print(
-              "QueryDefinitions retrieved:",
+              "QueryDefinitions:",
               len(queries)
           )
-
+          print(
+              "AutomationTasks:",
+              len(tasks)
+          )
           print(
               "Relationship:",
-              definition[
-                  "relationships"
-              ]["status"]
+              relationship_status
           )
-
           print("============================================")
           PY
 
 
       # ============================================================
-      # 9. SAVE TO CONFIG-DRIVEN ASSET PATH
+      # 10. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -906,15 +1014,19 @@ jobs:
           cp automation-metadata.json \
             "$OUTPUT_DIR/automation-metadata.json"
 
+          if [ -f automation-tasks.json ]; then
+            cp automation-tasks.json \
+              "$OUTPUT_DIR/automation-tasks.json"
+          fi
+
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
-          echo ""
-          echo "Retrieved Automation saved to:"
+          echo "Saved to:"
           echo "$OUTPUT_DIR"
 
 
       # ============================================================
-      # 10. DISPLAY DEFINITION
+      # 11. DISPLAY RESULT
       # ============================================================
       - name: Display retrieved definition
         shell: bash
@@ -923,16 +1035,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo ""
-          echo "============================================"
-          echo "RETRIEVED AUTOMATION DEFINITION"
-          echo "============================================"
-
           jq . "$OUTPUT_DIR/definition.json"
+
+          if [ -f "$OUTPUT_DIR/automation-tasks.json" ]; then
+            echo ""
+            echo "============================================"
+            echo "AUTOMATION TASK DISCOVERY"
+            echo "============================================"
+
+            jq . "$OUTPUT_DIR/automation-tasks.json"
+          fi
 
 
       # ============================================================
-      # 11. COMMIT RETRIEVED AUTOMATION
+      # 12. COMMIT
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -953,8 +1069,7 @@ jobs:
           git add "$OUTPUT_DIR"
 
           if git diff --cached --quiet; then
-            echo ""
-            echo "No Automation metadata changes detected."
+            echo "No Automation changes detected."
             exit 0
           fi
 
@@ -963,26 +1078,27 @@ jobs:
 
           git push origin HEAD:sandbox
 
-          echo ""
-          echo "Automation retrieval committed successfully."
+          echo "Automation retrieval committed."
 
 
       # ============================================================
-      # 12. FINAL RESULT
+      # 13. FINAL RESULT
       # ============================================================
       - name: Retrieval complete
         shell: bash
         env:
           AUTOMATION_NAME: ${{ inputs.automation_name }}
-          AUTOMATION_OBJECT_ID: ${{ steps.automation.outputs.object_id }}
-          AUTOMATION_CUSTOMER_KEY: ${{ steps.automation.outputs.customer_key }}
+          CUSTOMER_KEY: ${{ steps.automation.outputs.customer_key }}
+          OBJECT_ID: ${{ steps.automation.outputs.object_id }}
           QUERY_COUNT: ${{ steps.queries.outputs.query_count }}
+          TASK_OUTCOME: ${{ steps.task_discovery.outcome }}
+          TASK_COUNT: ${{ steps.task_discovery.outputs.task_count }}
         run: |
           set -euo pipefail
 
           echo ""
           echo "=================================================="
-          echo "SFMC SANDBOX AUTOMATION RETRIEVAL COMPLETED"
+          echo "SFMC AUTOMATION RETRIEVAL CHECKPOINT"
           echo "=================================================="
 
           echo ""
@@ -991,37 +1107,27 @@ jobs:
 
           echo ""
           echo "CustomerKey:"
-          echo "$AUTOMATION_CUSTOMER_KEY"
+          echo "$CUSTOMER_KEY"
 
           echo ""
           echo "ObjectID:"
-
-          if [ -n "$AUTOMATION_OBJECT_ID" ]; then
-            echo "$AUTOMATION_OBJECT_ID"
-          else
-            echo "[not returned by SFMC]"
-          fi
+          echo "${OBJECT_ID:-[not returned]}"
 
           echo ""
-          echo "Sandbox QueryDefinitions retrieved:"
+          echo "QueryDefinitions retrieved:"
           echo "$QUERY_COUNT"
 
           echo ""
-          echo "Automation metadata retrieval: SUCCESS"
-          echo "Automation CustomerKey resolved: SUCCESS"
-
-          if [ -n "$AUTOMATION_OBJECT_ID" ]; then
-            echo "Automation ObjectID returned: YES"
-          else
-            echo "Automation ObjectID returned: NO"
-          fi
+          echo "AutomationTask discovery step:"
+          echo "$TASK_OUTCOME"
 
           echo ""
-          echo "QueryDefinition retrieval: SUCCESS"
+          echo "AutomationTasks returned:"
+          echo "${TASK_COUNT:-0}"
 
           echo ""
-          echo "Task/activity relationship:"
-          echo "UNRESOLVED - no relationship guessed"
+          echo "IMPORTANT:"
+          echo "No task/query relationship has been guessed."
 
           echo ""
           echo "=================================================="
