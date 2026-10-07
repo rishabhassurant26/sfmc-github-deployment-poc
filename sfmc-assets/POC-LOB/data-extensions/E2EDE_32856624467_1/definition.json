@@ -2,7 +2,7 @@
   "assetType": "DataExtension",
   "name": "GITHUB_E2E_TARGET_DE_32856624467_1",
   "customerKey": "E2EDE_32856624467_1",
-  "description": "          End-to-end Target DE created through GitHub CI/CD        ",
+  "description": "End-to-end Target DE created through GitHub CI/CD",
   "isSendable": false,
   "isTestable": false,
   "fields": [

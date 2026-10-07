@@ -49,6 +49,8 @@ jobs:
           SANDBOX_MID=$(jq -r '.environments.sandbox.businessUnitMid // empty' "$CONFIG_FILE")
           AUTOMATIONS_ENABLED=$(jq -r '.assetTypes.automations.enabled // false' "$CONFIG_FILE")
           AUTOMATIONS_DIR=$(jq -r '.assetTypes.automations.directory // empty' "$CONFIG_FILE")
+          DATA_EXTENSIONS_ENABLED=$(jq -r '.assetTypes.dataExtensions.enabled // false' "$CONFIG_FILE")
+          DATA_EXTENSIONS_DIR=$(jq -r '.assetTypes.dataExtensions.directory // empty' "$CONFIG_FILE")
 
           [ -n "$LOB" ] || {
             echo "ERROR: lineOfBusiness missing."
@@ -75,10 +77,14 @@ jobs:
             exit 1
           }
 
+          [ "$DATA_EXTENSIONS_ENABLED" = "true" ] || { echo "ERROR: Data Extension retrieval disabled in config."; exit 1; }
+          [ -n "$DATA_EXTENSIONS_DIR" ] || { echo "ERROR: Data Extension directory missing."; exit 1; }
+
           echo "lob=$LOB" >> "$GITHUB_OUTPUT"
           echo "asset_root=$ASSET_ROOT" >> "$GITHUB_OUTPUT"
           echo "sandbox_mid=$SANDBOX_MID" >> "$GITHUB_OUTPUT"
           echo "automations_dir=$AUTOMATIONS_DIR" >> "$GITHUB_OUTPUT"
+          echo "data_extensions_dir=$DATA_EXTENSIONS_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Configuration validated."
 
@@ -3945,6 +3951,163 @@ jobs:
           print("============================================")
           PY
 
+      # ============================================================
+      # 20. RETRIEVE SQL DATA EXTENSION DEPENDENCIES
+      # Writes standard DE definitions consumed by the proven DE pipeline.
+      # Data rows are intentionally not retrieved.
+      # ============================================================
+      - name: Retrieve SQL Data Extension dependencies
+        id: de_dependencies
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+          ASSET_ROOT: ${{ steps.config.outputs.asset_root }}
+          LOB: ${{ steps.config.outputs.lob }}
+          DATA_EXTENSIONS_DIR: ${{ steps.config.outputs.data_extensions_dir }}
+        run: |
+          set -euo pipefail
+          export ACCESS_TOKEN SOAP_URL ASSET_ROOT LOB DATA_EXTENSIONS_DIR
+          python3 <<'PYDEPS'
+          import html, json, os, re, urllib.request, urllib.error
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          token=os.environ['ACCESS_TOKEN']; soap=os.environ['SOAP_URL'].rstrip('/')
+          root_dir=Path(os.environ['ASSET_ROOT'],os.environ['LOB'],os.environ['DATA_EXTENSIONS_DIR'])
+          def_path=Path('retrieved-definition.json')
+          definition=json.loads(def_path.read_text(encoding='utf-8'))
+          local=lambda tag: tag.split('}')[-1]
+          def esc(v): return html.escape(str(v or ''),quote=True)
+          def val(n,name):
+              for c in list(n):
+                  if local(c.tag)==name: return (c.text or '').strip()
+              return ''
+          def descendant(n,parent,child):
+              for x in n.iter():
+                  if local(x.tag)==parent: return val(x,child)
+              return ''
+          def boolean(v): return (v or '').lower()=='true'
+          def integer(v):
+              try: return int(v) if str(v or '').strip() else None
+              except ValueError: return None
+
+          def retrieve(obj,props,filter_prop,filter_value):
+              px=''.join(f'<et:Properties>{esc(p)}</et:Properties>' for p in props)
+              body=f'''<?xml version="1.0" encoding="UTF-8"?>
+              <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:et="http://exacttarget.com/wsdl/partnerAPI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+              <soapenv:Header><fueloauth xmlns="http://exacttarget.com">{esc(token)}</fueloauth></soapenv:Header>
+              <soapenv:Body><et:RetrieveRequestMsg><et:RetrieveRequest>
+              <et:ObjectType>{esc(obj)}</et:ObjectType>{px}
+              <et:Filter xsi:type="et:SimpleFilterPart"><et:Property>{esc(filter_prop)}</et:Property><et:SimpleOperator>equals</et:SimpleOperator><et:Value>{esc(filter_value)}</et:Value></et:Filter>
+              </et:RetrieveRequest></et:RetrieveRequestMsg></soapenv:Body></soapenv:Envelope>'''
+              req=urllib.request.Request(soap+'/Service.asmx',data=body.encode(),headers={'Content-Type':'text/xml; charset=UTF-8','SOAPAction':'Retrieve'},method='POST')
+              try:
+                  with urllib.request.urlopen(req) as r: raw=r.read()
+              except urllib.error.HTTPError as e:
+                  print(e.read().decode(errors='replace')); raise
+              x=ET.fromstring(raw)
+              statuses=[(n.text or '').strip() for n in x.iter() if local(n.tag)=='OverallStatus']
+              if statuses and statuses[0] not in ('OK','MoreDataAvailable','Has More Rows'):
+                  raise SystemExit(f'{obj} retrieve failed: {statuses[0]}')
+              return [n for n in x.iter() if local(n.tag)=='Results']
+
+          de_props=['ObjectID','CustomerKey','Name','Description','IsSendable','IsTestable','SendableDataExtensionField.Name','SendableSubscriberField.Name']
+          def exact(prop,identifier):
+              rs=[r for r in retrieve('DataExtension',de_props,prop,identifier) if val(r,prop)==identifier]
+              if len(rs)>1: raise SystemExit(f'Ambiguous DE {prop}={identifier!r}')
+              return rs[0] if rs else None
+          def resolve(identifier):
+              candidates={}
+              for r in (exact('CustomerKey',identifier),exact('Name',identifier)):
+                  if r is not None: candidates[val(r,'ObjectID') or val(r,'CustomerKey')]=r
+              if len(candidates)!=1:
+                  raise SystemExit(f'DE dependency must resolve exactly once by Name/CustomerKey: {identifier!r}; matches={len(candidates)}')
+              return next(iter(candidates.values()))
+
+          def sql_sources(sql):
+              s=re.sub(r'/\*.*?\*/',' ',sql or '',flags=re.S); s=re.sub(r'--[^\r\n]*',' ',s); s=re.sub(r"'(?:''|[^'])*'","''",s)
+              if re.search(r'\b(?:FROM|JOIN)\s*\(',s,re.I): raise SystemExit('Nested FROM/JOIN subquery is outside this SQL dependency POC; no guessing allowed.')
+              pat=re.compile(r'\b(?:FROM|JOIN)\s+(?:\[([^\]]+)\]|([A-Za-z0-9_.$#-]+))',re.I)
+              out=[]
+              for m in pat.finditer(s):
+                  x=(m.group(1) or m.group(2) or '').strip()
+                  if x and x not in out: out.append(x)
+              return out
+
+          deps={}
+          def add(identifier,role,qkey):
+              node=resolve(identifier); key=val(node,'CustomerKey')
+              d=deps.setdefault(key,{'node':node,'roles':set(),'queries':set()}); d['roles'].add(role); d['queries'].add(qkey)
+
+          for task in definition.get('tasks') or []:
+              for activity in task.get('activities') or []:
+                  q=activity.get('definition') or {}
+                  if q.get('type')!='QueryDefinition': continue
+                  qkey=(q.get('customerKey') or '').strip(); sources=sql_sources(q.get('queryText') or '')
+                  if not sources: raise SystemExit(f'No direct FROM/JOIN DE found in query {qkey}')
+                  for source in sources: add(source,'source',qkey)
+                  target=(q.get('targetDataExtension') or {}).get('customerKey','').strip()
+                  if not target: raise SystemExit(f'Target DE key missing in query {qkey}')
+                  add(target,'target',qkey)
+
+          # Match the proven standalone DE retrieval behavior: ask this tenant
+          # which DataExtensionField properties are actually retrievable, then
+          # request only that supported subset. Do not hardcode Precision/Scale.
+          def describe_retrievable(obj):
+              body=f'''<?xml version="1.0" encoding="UTF-8"?>
+              <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:et="http://exacttarget.com/wsdl/partnerAPI">
+              <soapenv:Header><fueloauth xmlns="http://exacttarget.com">{esc(token)}</fueloauth></soapenv:Header>
+              <soapenv:Body><et:DefinitionRequestMsg><et:DescribeRequests><et:ObjectDefinitionRequest>
+              <et:ObjectType>{esc(obj)}</et:ObjectType>
+              </et:ObjectDefinitionRequest></et:DescribeRequests></et:DefinitionRequestMsg></soapenv:Body></soapenv:Envelope>'''
+              req=urllib.request.Request(soap+'/Service.asmx',data=body.encode(),headers={'Content-Type':'text/xml; charset=UTF-8','SOAPAction':'Describe'},method='POST')
+              try:
+                  with urllib.request.urlopen(req) as r: raw=r.read()
+              except urllib.error.HTTPError as e:
+                  print(e.read().decode(errors='replace')); raise
+              x=ET.fromstring(raw)
+              faults=[(n.text or '').strip() for n in x.iter() if local(n.tag)=='faultstring']
+              if faults: raise SystemExit(f'{obj} Describe failed: {faults[0]}')
+              supported=set()
+              for prop in x.iter():
+                  if local(prop.tag)!='Properties': continue
+                  name=val(prop,'Name'); retrievable=val(prop,'IsRetrievable').lower()=='true'
+                  if name and retrievable: supported.add(name)
+              if not supported: raise SystemExit(f'{obj} Describe returned no retrievable properties')
+              return supported
+
+          candidates=['ObjectID','CustomerKey','Name','FieldType','MaxLength','IsPrimaryKey','IsRequired','DefaultValue','Ordinal','Precision','Scale']
+          supported=describe_retrievable('DataExtensionField')
+          field_props=[p for p in candidates if p in supported]
+          required=['Name','FieldType','IsPrimaryKey','IsRequired','Ordinal']
+          missing=[p for p in required if p not in field_props]
+          if missing: raise SystemExit('Required DataExtensionField properties are not retrievable: '+', '.join(missing))
+          print('Tenant-supported DataExtensionField properties:',', '.join(field_props))
+          manifest=[]
+          for key,d in sorted(deps.items()):
+              node=d['node']; fields=[]
+              for f in retrieve('DataExtensionField',field_props,'DataExtension.CustomerKey',key):
+                  fields.append({'name':val(f,'Name'),'fieldType':val(f,'FieldType'),'maxLength':integer(val(f,'MaxLength')),'isPrimaryKey':boolean(val(f,'IsPrimaryKey')),'isRequired':boolean(val(f,'IsRequired')),'defaultValue':val(f,'DefaultValue') or None,'ordinal':integer(val(f,'Ordinal')),'precision':integer(val(f,'Precision')),'scale':integer(val(f,'Scale'))})
+              if not fields or any(not f['name'] or not f['fieldType'] for f in fields): raise SystemExit(f'Incomplete field metadata for DE {key}')
+              fields.sort(key=lambda f:(f['ordinal'] is None,f['ordinal'] if f['ordinal'] is not None else 999999,f['name']))
+              out={'assetType':'DataExtension','name':val(node,'Name'),'customerKey':key,'description':val(node,'Description'),'isSendable':boolean(val(node,'IsSendable')),'isTestable':boolean(val(node,'IsTestable')),'fields':fields}
+              if out['isSendable']:
+                  a=descendant(node,'SendableDataExtensionField','Name'); b=descendant(node,'SendableSubscriberField','Name')
+                  if not a or not b: raise SystemExit(f'Sendable relationship missing for DE {key}')
+                  out['sendableDataExtensionField']={'name':a}; out['sendableSubscriberField']={'name':b}
+              folder=root_dir/key; folder.mkdir(parents=True,exist_ok=True); path=folder/'definition.json'; path.write_text(json.dumps(out,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+              manifest.append({'customerKey':key,'name':out['name'],'roles':sorted(d['roles']),'queryDefinitions':sorted(d['queries']),'repositoryDefinition':path.as_posix()})
+
+          definition['dataExtensionDependencies']=manifest
+          def_path.write_text(json.dumps(definition,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+          Path('data-extension-dependencies.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write(f'dependency_count={len(manifest)}\n'); f.write(f'dependency_root={root_dir.as_posix()}\n')
+          print('Dependencies retrieved:',len(manifest)); print('Data rows retrieved: NO')
+          for d in manifest: print(d['customerKey'],'|',d['name'],'|',','.join(d['roles']))
+          PYDEPS
+
 
       # 20. SAVE RESULT
       # ============================================================
@@ -3974,6 +4137,9 @@ jobs:
 
           cp query-definitions.json \
             "$OUTPUT_DIR/query-definitions.json"
+
+          cp data-extension-dependencies.json \
+            "$OUTPUT_DIR/data-extension-dependencies.json"
 
           if [ -f automation-objectid-proof.json ]; then
             cp automation-objectid-proof.json \
@@ -4244,6 +4410,7 @@ jobs:
             "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add "$OUTPUT_DIR"
+          git add "${{ steps.de_dependencies.outputs.dependency_root }}"
 
           if git diff --cached --quiet; then
             echo "No Automation changes detected."
