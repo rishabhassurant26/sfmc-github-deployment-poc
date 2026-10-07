@@ -1,0 +1,16 @@
+{
+  "status": "SCHEDULE_ID_RESOLVED",
+  "soapStatus": "OK",
+  "requestId": "77e04711-d0ed-4693-b267-5a9db3e1f443",
+  "requestedProgramObjectId": "46405579-6981-4b47-bd18-190fe031b317",
+  "programsReturned": 1,
+  "program": {
+    "ObjectID": "46405579-6981-4b47-bd18-190fe031b317",
+    "CustomerKey": "5a5e6823-4764-9dca-692a-c4265f3710cd",
+    "Name": "POC_Filter_Active_Customers",
+    "Schedule": {
+      "ID": "0"
+    }
+  },
+  "scheduleId": "0"
+}

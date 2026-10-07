@@ -1,0 +1,41 @@
+{
+  "status": "QUERY_RELATIONSHIPS_RESOLVED",
+  "activitiesChecked": 1,
+  "queryDefinitionsAvailable": 23,
+  "relationshipsResolved": 1,
+  "relationships": [
+    {
+      "activity": {
+        "objectId": "02651fe4-4823-4715-bcd9-f29fb2c32517",
+        "name": "POC_Customers_Filtered",
+        "customerKey": "8b206a0a-0c88-4efe-983a-ff0a008e3558",
+        "sequence": "0",
+        "taskObjectId": "4dbc7217-bd18-47c0-ab76-4d9624116341",
+        "definitionObjectId": "abfa8d84-c7a1-4d04-af31-1e71cc238287"
+      },
+      "queryDefinition": {
+        "objectId": "abfa8d84-c7a1-4d04-af31-1e71cc238287",
+        "customerKey": "ABFA8D84-C7A1-4D04-AF31-1E71CC238287",
+        "name": "POC_Customers_Filtered",
+        "description": "",
+        "queryText": "SELECT\n    CustomerID,\n    FirstName,\n    EmailAddress,\n    Status,\n    City\nFROM POC_Customers_Source\nWHERE Status = 'Active'",
+        "targetType": "DE",
+        "targetDataExtension": {
+          "name": "POC_Customers_Filtered",
+          "customerKey": "71E94E90-4129-4E29-B1FC-CD36B5A34222",
+          "description": ""
+        },
+        "targetUpdateType": "Overwrite",
+        "categoryId": "",
+        "status": ""
+      },
+      "proof": {
+        "matchType": "EXACT_OBJECT_ID",
+        "activityDefinitionObjectId": "abfa8d84-c7a1-4d04-af31-1e71cc238287",
+        "queryDefinitionObjectId": "abfa8d84-c7a1-4d04-af31-1e71cc238287"
+      }
+    }
+  ],
+  "unresolvedActivities": [],
+  "duplicateQueryObjectIds": []
+}

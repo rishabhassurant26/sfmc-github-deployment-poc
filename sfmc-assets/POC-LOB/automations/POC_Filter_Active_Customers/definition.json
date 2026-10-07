@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "2.0",
+  "assetType": "automation",
+  "environment": "sandbox",
+  "businessUnitMid": "524002130",
+  "lineOfBusiness": "POC-LOB",
+  "automation": {
+    "name": "POC_Filter_Active_Customers",
+    "customerKey": "5a5e6823-4764-9dca-692a-c4265f3710cd",
+    "description": "",
+    "automationType": "scheduled",
+    "source": {
+      "automationSourceId": "",
+      "automationSourceType": ""
+    }
+  },
+  "program": {
+    "sourceObjectId": "46405579-6981-4b47-bd18-190fe031b317"
+  },
+  "tasks": [
+    {
+      "sequence": 0,
+      "name": "",
+      "description": "",
+      "activities": [
+        {
+          "sequence": 0,
+          "name": "POC_Customers_Filtered",
+          "customerKey": "8b206a0a-0c88-4efe-983a-ff0a008e3558",
+          "activityTypeId": "",
+          "definition": {
+            "type": "QueryDefinition",
+            "name": "POC_Customers_Filtered",
+            "customerKey": "ABFA8D84-C7A1-4D04-AF31-1E71CC238287",
+            "description": "",
+            "queryText": "SELECT\n    CustomerID,\n    FirstName,\n    EmailAddress,\n    Status,\n    City\nFROM POC_Customers_Source\nWHERE Status = 'Active'",
+            "targetType": "DE",
+            "targetDataExtension": {
+              "name": "POC_Customers_Filtered",
+              "customerKey": "71E94E90-4129-4E29-B1FC-CD36B5A34222",
+              "description": ""
+            },
+            "targetUpdateType": "Overwrite"
+          }
+        }
+      ]
+    }
+  ],
+  "schedule": {
+    "deploymentMode": "manual",
+    "activateAfterDeployment": false,
+    "reason": "Automation structure is version-controlled and deployed by CI/CD; Production schedule/activation is configured manually after deployment."
+  },
+  "deploymentPolicy": {
+    "deployStructure": true,
+    "deploySchedule": false,
+    "activateAutomation": false,
+    "runAutomation": false
+  },
+  "dataExtensionDependencies": [
+    {
+      "customerKey": "239FAE0C-BA36-4038-853E-D6F808544468",
+      "name": "POC_Customers_Source",
+      "roles": [
+        "source"
+      ],
+      "queryDefinitions": [
+        "ABFA8D84-C7A1-4D04-AF31-1E71CC238287"
+      ],
+      "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/239FAE0C-BA36-4038-853E-D6F808544468/definition.json"
+    },
+    {
+      "customerKey": "71E94E90-4129-4E29-B1FC-CD36B5A34222",
+      "name": "POC_Customers_Filtered",
+      "roles": [
+        "target"
+      ],
+      "queryDefinitions": [
+        "ABFA8D84-C7A1-4D04-AF31-1E71CC238287"
+      ],
+      "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/71E94E90-4129-4E29-B1FC-CD36B5A34222/definition.json"
+    }
+  ]
+}
