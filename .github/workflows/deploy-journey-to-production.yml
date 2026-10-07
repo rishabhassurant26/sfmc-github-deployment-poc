@@ -1,0 +1,374 @@
+name: Deploy SFMC Journey to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      journey_name:
+        description: "Exact approved Journey name from main"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sfmc-production-journey-poc
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout reviewed main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate config and select Journey definition
+        id: config
+        shell: bash
+        env:
+          INPUT_NAME: ${{ inputs.journey_name }}
+        run: |
+          set -euo pipefail
+          CONFIG="config/lob-config.json"
+          jq -e . "$CONFIG" >/dev/null
+
+          LOB=$(jq -r '.lineOfBusiness // empty' "$CONFIG")
+          ROOT=$(jq -r '.assetRoot // empty' "$CONFIG")
+          MID=$(jq -r '.environments.production.businessUnitMid // empty' "$CONFIG")
+          ENABLED=$(jq -r '.assetTypes.journeys.enabled // false' "$CONFIG")
+          DIR=$(jq -r '.assetTypes.journeys.directory // empty' "$CONFIG")
+
+          [ -n "$LOB" ] || { echo "::error::lineOfBusiness missing"; exit 1; }
+          [ -n "$ROOT" ] || { echo "::error::assetRoot missing"; exit 1; }
+          [[ "$MID" =~ ^[0-9]+$ ]] || { echo "::error::Production MID invalid"; exit 1; }
+          [ "$ENABLED" = "true" ] || { echo "::error::Journeys disabled in config"; exit 1; }
+          [ -n "$DIR" ] || { echo "::error::Journey directory missing"; exit 1; }
+
+          NAME="${INPUT_NAME}"
+          if [ -z "$NAME" ] || [ "$NAME" = "." ] || [ "$NAME" = ".." ] || [[ "$NAME" == *"/"* ]] || [[ "$NAME" == *"\\"* ]]; then
+            echo "::error::Invalid Journey name"; exit 1
+          fi
+
+          JOURNEY_ROOT="${ROOT}/${LOB}/${DIR}"
+          [ -d "$JOURNEY_ROOT" ] || { echo "::error::Journey root not found: $JOURNEY_ROOT"; exit 1; }
+          export JOURNEY_ROOT NAME
+
+          FILE=$(python3 <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path(os.environ['JOURNEY_ROOT'])
+          name=os.environ['NAME']
+          matches=[]
+          for p in sorted(root.glob('*/definition.json')):
+              d=json.loads(p.read_text(encoding='utf-8'))
+              if (d.get('journey') or {}).get('name') == name:
+                  matches.append(p)
+          if len(matches) != 1:
+              raise SystemExit(f"Expected exactly one approved Journey definition for {name!r}; found {len(matches)}")
+          print(matches[0])
+          PY
+          )
+
+          echo "definition=$FILE" >> "$GITHUB_OUTPUT"
+          echo "production_mid=$MID" >> "$GITHUB_OUTPUT"
+          echo "Resolved Journey definition: $FILE"
+
+      - name: Validate Journey definition and deployment policy
+        shell: bash
+        env:
+          FILE: ${{ steps.config.outputs.definition }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json, os
+          d=json.load(open(os.environ['FILE'],encoding='utf-8'))
+          if d.get('schemaVersion') != '1.0' or d.get('assetType') != 'journey':
+              raise SystemExit('Invalid Journey definition schema/assetType.')
+          p=d.get('deploymentPolicy') or {}
+          expected={
+              'deployStructure': True,
+              'deployEntryDataExtension': True,
+              'deployDataRows': False,
+              'publishJourney': False,
+              'activateJourney': False,
+          }
+          for k,v in expected.items():
+              if p.get(k) is not v:
+                  raise SystemExit(f'Deployment policy blocked: {k} must be {v}.')
+          j=d.get('journey') or {}
+          if not str(j.get('name') or '').strip(): raise SystemExit('Journey name missing.')
+          if not str(j.get('key') or '').strip(): raise SystemExit('Journey key missing.')
+          if not j.get('workflowApiVersion'): raise SystemExit('workflowApiVersion missing.')
+          if len(j.get('triggers') or []) != 1: raise SystemExit('Exactly one trigger is required.')
+          if not (j.get('activities') or []): raise SystemExit('Journey activities missing.')
+          e=d.get('entryEventDefinition') or {}
+          if not str(e.get('eventDefinitionKey') or '').strip(): raise SystemExit('Event Definition key missing.')
+          de=(d.get('dependencies') or {}).get('entryDataExtension') or {}
+          if not str(de.get('customerKey') or '').strip(): raise SystemExit('Entry DE CustomerKey missing.')
+          if not (de.get('fields') or []): raise SystemExit('Entry DE fields missing.')
+          print('Definition validated.')
+          print('Data rows deployment: blocked')
+          print('Journey publish: blocked')
+          print('Journey activation/start: blocked')
+          PY
+
+      - name: Validate SFMC secrets
+        shell: bash
+        env:
+          AUTH: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          CID: ${{ secrets.SFMC_CLIENT_ID }}
+          SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          [ -n "${AUTH:-}" ] || { echo "::error::SFMC_AUTH_BASE_URI missing"; exit 1; }
+          [ -n "${CID:-}" ] || { echo "::error::SFMC_CLIENT_ID missing"; exit 1; }
+          [ -n "${SECRET:-}" ] || { echo "::error::SFMC_CLIENT_SECRET missing"; exit 1; }
+
+      - name: Authenticate Production BU
+        shell: bash
+        env:
+          AUTH: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          CID: ${{ secrets.SFMC_CLIENT_ID }}
+          SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+          MID: ${{ steps.config.outputs.production_mid }}
+        run: |
+          set -euo pipefail
+          CODE=$(curl --silent --show-error --output /tmp/token.json --write-out "%{http_code}" \
+            --request POST "${AUTH%/}/v2/token" --header "Content-Type: application/json" \
+            --data "$(jq -n --arg id "$CID" --arg secret "$SECRET" --arg mid "$MID" \
+              '{grant_type:"client_credentials",client_id:$id,client_secret:$secret,account_id:($mid|tonumber)}')")
+          if [ "$CODE" -lt 200 ] || [ "$CODE" -ge 300 ]; then
+            cat /tmp/token.json; exit 1
+          fi
+          TOKEN=$(jq -r '.access_token // empty' /tmp/token.json)
+          SOAP=$(jq -r '.soap_instance_url // empty' /tmp/token.json)
+          REST=$(jq -r '.rest_instance_url // empty' /tmp/token.json)
+          [ -n "$TOKEN" ] && [ -n "$SOAP" ] && [ -n "$REST" ] || { echo "::error::OAuth response incomplete"; exit 1; }
+          echo "::add-mask::$TOKEN"
+          printf '%s' "$TOKEN" > /tmp/sfmc-token
+          printf '%s' "${SOAP%/}" > /tmp/sfmc-soap
+          printf '%s' "${REST%/}" > /tmp/sfmc-rest
+          echo "Production authentication successful. MID: $MID"
+
+      - name: Reconcile Entry Data Extension dependency
+        id: de
+        shell: bash
+        env:
+          FILE: ${{ steps.config.outputs.definition }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json, os, html, urllib.request, urllib.error, xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          token=Path('/tmp/sfmc-token').read_text().strip()
+          soap=Path('/tmp/sfmc-soap').read_text().strip() + '/Service.asmx'
+          d=json.load(open(os.environ['FILE'],encoding='utf-8'))
+          de=d['dependencies']['entryDataExtension']
+          API='http://exacttarget.com/wsdl/partnerAPI'
+          SOAP='http://schemas.xmlsoap.org/soap/envelope/'
+          XSI='http://www.w3.org/2001/XMLSchema-instance'
+
+          def esc(v): return html.escape(str(v if v is not None else ''), quote=True)
+          def lname(n): return n.tag.split('}')[-1]
+          def child(n,k):
+              for c in list(n):
+                  if lname(c)==k: return (c.text or '').strip()
+              return ''
+          def nested(n,p,k):
+              for c in list(n):
+                  if lname(c)==p: return child(c,k)
+              return ''
+          def call(action, body):
+              env=f'''<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope xmlns:soapenv="{SOAP}" xmlns:xsi="{XSI}"><soapenv:Header><fueloauth xmlns="http://exacttarget.com">{esc(token)}</fueloauth></soapenv:Header><soapenv:Body>{body}</soapenv:Body></soapenv:Envelope>'''
+              req=urllib.request.Request(soap,data=env.encode(),method='POST',headers={'Content-Type':'text/xml; charset=UTF-8','SOAPAction':f'"{action}"'})
+              try:
+                  with urllib.request.urlopen(req,timeout=60) as r: payload=r.read()
+              except urllib.error.HTTPError as e:
+                  payload=e.read(); raise RuntimeError(f'SOAP {action} HTTP {e.code}: '+payload.decode(errors='replace'))
+              root=ET.fromstring(payload)
+              fault=root.find(f'.//{{{SOAP}}}Fault')
+              if fault is not None: raise RuntimeError('SOAP fault: '+''.join(fault.itertext()))
+              return root
+          def retrieve(obj, props, fp, fv):
+              px=''.join(f'<et:Properties>{esc(p)}</et:Properties>' for p in props)
+              body=f'''<RetrieveRequestMsg xmlns="{API}" xmlns:et="{API}"><RetrieveRequest><ObjectType>{esc(obj)}</ObjectType>{px}<Filter xsi:type="SimpleFilterPart"><Property>{esc(fp)}</Property><SimpleOperator>equals</SimpleOperator><Value>{esc(fv)}</Value></Filter></RetrieveRequest></RetrieveRequestMsg>'''
+              root=call('Retrieve',body)
+              return [n for n in root.iter() if lname(n)=='Results']
+
+          key=de['customerKey']
+          found=retrieve('DataExtension',['ObjectID','CustomerKey','Name','IsSendable','IsTestable','SendableDataExtensionField.Name','SendableSubscriberField.Name'],'CustomerKey',key)
+          if len(found)>1: raise RuntimeError(f'Multiple Production DEs found for CustomerKey {key}')
+
+          if not found:
+              field_xml=[]
+              for f in de['fields']:
+                  parts=[f'<Name>{esc(f["name"])}</Name>',f'<FieldType>{esc(f["fieldType"])}</FieldType>']
+                  if f.get('maxLength') is not None: parts.append(f'<MaxLength>{int(f["maxLength"])}</MaxLength>')
+                  parts += [f'<IsPrimaryKey>{str(bool(f.get("isPrimaryKey"))).lower()}</IsPrimaryKey>',f'<IsRequired>{str(bool(f.get("isRequired"))).lower()}</IsRequired>']
+                  if f.get('defaultValue') not in (None,''): parts.append(f'<DefaultValue>{esc(f["defaultValue"])}</DefaultValue>')
+                  if f.get('ordinal') is not None: parts.append(f'<Ordinal>{int(f["ordinal"])}</Ordinal>')
+                  if f.get('scale') is not None: parts.append(f'<Scale>{int(f["scale"])}</Scale>')
+                  field_xml.append('<Fields>'+''.join(parts)+'</Fields>')
+              send=''
+              if de.get('isSendable'):
+                  sf=de.get('sendableDataExtensionField') or ''
+                  ss=de.get('sendableSubscriberField') or ''
+                  platform={'_SubscriberKey':'Subscriber Key','_SubscriberID':'Subscriber ID','_EmailAddress':'Email Address'}.get(ss,ss)
+                  send=f'<IsSendable>true</IsSendable><SendableDataExtensionField><Name>{esc(sf)}</Name></SendableDataExtensionField><SendableSubscriberField><Name>{esc(platform)}</Name></SendableSubscriberField>'
+              body=f'''<CreateRequest xmlns="{API}"><Options/><Objects xsi:type="DataExtension"><CustomerKey>{esc(key)}</CustomerKey><Name>{esc(de['name'])}</Name><IsTestable>{str(bool(de.get('isTestable'))).lower()}</IsTestable>{send}{''.join(field_xml)}</Objects></CreateRequest>'''
+              root=call('Create',body)
+              status=next(((n.text or '').strip() for n in root.iter() if lname(n)=='StatusCode'),'')
+              if status not in ('OK','Has Error'):
+                  raise RuntimeError('Unexpected DE Create response: '+''.join(root.itertext()))
+              found=retrieve('DataExtension',['ObjectID','CustomerKey','Name','IsSendable','IsTestable','SendableDataExtensionField.Name','SendableSubscriberField.Name'],'CustomerKey',key)
+              if len(found)!=1: raise RuntimeError('Entry DE CREATE could not be verified.')
+              action='CREATE'
+          else:
+              action='SKIP'
+
+          obj=found[0]; oid=child(obj,'ObjectID')
+          fields=retrieve('DataExtensionField',['Name','FieldType','MaxLength','IsPrimaryKey','IsRequired','DefaultValue','Ordinal','Scale'],'DataExtension.CustomerKey',key)
+          actual={child(x,'Name'):x for x in fields}
+          expected={f['name']:f for f in de['fields']}
+          if set(actual)!=set(expected): raise RuntimeError(f'Entry DE schema field-name mismatch. expected={sorted(expected)} actual={sorted(actual)}')
+          for name,f in expected.items():
+              a=actual[name]
+              checks={'FieldType':str(f.get('fieldType') or ''),'IsPrimaryKey':str(bool(f.get('isPrimaryKey'))).lower(),'IsRequired':str(bool(f.get('isRequired'))).lower()}
+              for prop,exp in checks.items():
+                  if child(a,prop).lower()!=exp.lower(): raise RuntimeError(f'Entry DE field mismatch {name}.{prop}: expected={exp} actual={child(a,prop)}')
+              if f.get('maxLength') is not None and child(a,'MaxLength') != str(f['maxLength']): raise RuntimeError(f'Entry DE MaxLength mismatch for {name}')
+          print(f'Entry DE {action}/PASS: {key} | ObjectID={oid}')
+          print('Data rows deployed: NO')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out: out.write(f'object_id={oid}\n')
+          PY
+
+      - name: Reconcile Entry Event Definition
+        id: event
+        shell: bash
+        env:
+          FILE: ${{ steps.config.outputs.definition }}
+          PROD_DE_OBJECT_ID: ${{ steps.de.outputs.object_id }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json, os, urllib.request, urllib.error, urllib.parse
+          from pathlib import Path
+          token=Path('/tmp/sfmc-token').read_text().strip(); rest=Path('/tmp/sfmc-rest').read_text().strip()
+          d=json.load(open(os.environ['FILE'],encoding='utf-8')); src=d['entryEventDefinition']; deid=os.environ['PROD_DE_OBJECT_ID']
+          key=src['eventDefinitionKey']
+          def request(method,path,payload=None,allow404=False):
+              data=None if payload is None else json.dumps(payload).encode()
+              req=urllib.request.Request(rest+path,data=data,method=method,headers={'Authorization':f'Bearer {token}','Accept':'application/json','Content-Type':'application/json'})
+              try:
+                  with urllib.request.urlopen(req,timeout=60) as r:
+                      raw=r.read().decode(); return json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  body=e.read().decode(errors='replace')
+                  if allow404 and e.code==404: return None
+                  raise RuntimeError(f'{method} {path} HTTP {e.code}: {body}')
+          existing=request('GET','/interaction/v1/eventDefinitions/key:'+urllib.parse.quote(key,safe=''),allow404=True)
+          if existing:
+              if existing.get('dataExtensionId') != deid:
+                  raise RuntimeError(f'Production Event Definition exists but points to different DE: {existing.get("dataExtensionId")} != {deid}')
+              action='SKIP'; event=existing
+          else:
+              payload={
+                  'name': src.get('name') or d['journey']['name']+' Entry Event',
+                  'description': src.get('description') or '',
+                  'eventDefinitionKey': key,
+                  'dataExtensionId': deid,
+                  'type': src.get('type') or 'Event',
+                  'mode': src.get('mode') or 'Production',
+                  'isVisibleInPicker': True,
+              }
+              if src.get('sourceApplicationExtensionId'): payload['sourceApplicationExtensionId']=src['sourceApplicationExtensionId']
+              event=request('POST','/interaction/v1/eventDefinitions',payload)
+              action='CREATE'
+          if event.get('eventDefinitionKey') != key: raise RuntimeError('Event Definition verification key mismatch.')
+          if event.get('dataExtensionId') != deid: raise RuntimeError('Event Definition verification DE mismatch.')
+          print(f'Entry Event Definition {action}/PASS: {key}')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out: out.write(f'event_key={key}\n')
+          PY
+
+      - name: Create or verify Draft Journey structure
+        shell: bash
+        env:
+          FILE: ${{ steps.config.outputs.definition }}
+          EVENT_KEY: ${{ steps.event.outputs.event_key }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import copy, json, os, urllib.request, urllib.error, urllib.parse
+          from pathlib import Path
+          token=Path('/tmp/sfmc-token').read_text().strip(); rest=Path('/tmp/sfmc-rest').read_text().strip()
+          d=json.load(open(os.environ['FILE'],encoding='utf-8')); j=d['journey']; event_key=os.environ['EVENT_KEY']
+
+          def request(method,path,payload=None,allow404=False):
+              data=None if payload is None else json.dumps(payload).encode()
+              req=urllib.request.Request(rest+path,data=data,method=method,headers={'Authorization':f'Bearer {token}','Accept':'application/json','Content-Type':'application/json'})
+              try:
+                  with urllib.request.urlopen(req,timeout=60) as r:
+                      raw=r.read().decode(); return json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  body=e.read().decode(errors='replace')
+                  if allow404 and e.code==404: return None
+                  raise RuntimeError(f'{method} {path} HTTP {e.code}: {body}')
+
+          key=j['key']
+          existing=request('GET','/interaction/v1/interactions/key:'+urllib.parse.quote(key,safe='')+'?extras=all',allow404=True)
+          if existing:
+              if (existing.get('name') or '') != j['name']:
+                  raise RuntimeError('Production Journey key already exists with a different name.')
+              print('Production Journey already exists. No UPDATE performed.')
+              print(f"Journey: {existing.get('name')} | Status={existing.get('status')} | Version={existing.get('version') or existing.get('versionNumber')}")
+              print('Publish: NO | Activate/Start: NO | Update: NO')
+              raise SystemExit(0)
+
+          trigger=copy.deepcopy((j.get('triggers') or [])[0])
+          trigger.pop('id',None)
+          md=trigger.pop('metaData',None) or {}
+          trigger['eventDefinitionKey']=event_key
+          trigger['type']='Event'
+          # Sandbox response can place Event Definition information under metaData;
+          # Journey Spec creation requires eventDefinitionKey on the trigger itself.
+
+          activities=copy.deepcopy(j.get('activities') or [])
+          for a in activities:
+              a.pop('id',None)
+
+          payload={
+              'key': key,
+              'name': j['name'],
+              'description': j.get('description') or '',
+              'workflowApiVersion': j['workflowApiVersion'],
+              'triggers': [trigger],
+              'activities': activities,
+              'goals': j.get('goals') or [],
+          }
+          if j.get('defaults') is not None: payload['defaults']=j.get('defaults')
+
+          created=request('POST','/interaction/v1/interactions',payload)
+          cid=created.get('id')
+          if not cid: raise RuntimeError('Journey CREATE response did not contain id.')
+          verify=request('GET','/interaction/v1/interactions/'+urllib.parse.quote(str(cid),safe='')+'?extras=all')
+          if verify.get('name') != j['name'] or verify.get('key') != key: raise RuntimeError('Journey verification identity mismatch.')
+          status=(verify.get('status') or '').lower()
+          if status not in ('draft',''): raise RuntimeError(f'Unexpected Journey status after CREATE: {verify.get("status")}')
+          print('PRODUCTION JOURNEY DEPLOYMENT VERIFIED')
+          print(f"Journey: {verify.get('name')}")
+          print(f"Key: {verify.get('key')}")
+          print(f"ID: {verify.get('id')}")
+          print(f"Status: {verify.get('status')}")
+          print(f"Activities: {len(verify.get('activities') or [])}")
+          print('Entry DE dependency: VERIFIED')
+          print('Entry Event Definition: VERIFIED')
+          print('Data rows deployed: NO')
+          print('Published: NO')
+          print('Activated/Started: NO')
+          PY
