@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "assetType": "automation",
   "environment": "sandbox",
   "businessUnitMid": "524002130",
@@ -18,11 +18,13 @@
     "customerKeyResolved": true,
     "objectIdReturned": false
   },
+  "discovery": {
+    "queryDefinitionsRetrieved": 21,
+    "automationTasksReturned": 0,
+    "automationTaskDiscoveryOutcome": "success"
+  },
   "relationships": {
     "status": "UNRESOLVED",
-    "reason": "Automation metadata and QueryDefinitions were retrieved from SFMC independently. No Automation-to-Query relationship has been guessed."
-  },
-  "discovery": {
-    "queryDefinitionsRetrieved": 21
+    "reason": "Automation and QueryDefinition metadata were retrieved successfully, but SFMC did not provide enough relationship evidence to associate a task/query with this Automation."
   }
 }
