@@ -1284,10 +1284,20 @@ jobs:
               return node.tag.split("}")[-1]
 
           def child_text(node, name):
-              for child in list(node):
-                  if lname(child) == name:
-                      return (child.text or "").strip()
-              return ""
+              # SOAP dot-notation properties such as Definition.ObjectID are
+              # returned as nested XML (<Definition><ObjectID>...</ObjectID>).
+              # Resolve both direct and dotted property paths.
+              current = node
+              for part in name.split("."):
+                  match = None
+                  for child in list(current):
+                      if lname(child) == part:
+                          match = child
+                          break
+                  if match is None:
+                      return ""
+                  current = match
+              return (current.text or "").strip()
 
           def overall(root):
               for node in root.iter():
