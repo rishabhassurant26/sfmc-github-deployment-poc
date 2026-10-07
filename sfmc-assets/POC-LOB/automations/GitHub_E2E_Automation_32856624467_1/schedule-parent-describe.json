@@ -1,0 +1,282 @@
+{
+  "Automation": {
+    "soapStatus": "",
+    "requestId": "9493e612-8d05-4d6e-8b63-e394588b52b3",
+    "objectType": "Automation",
+    "propertyCount": 38,
+    "retrievablePropertyCount": 13,
+    "retrievableProperties": [
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "ObjectID",
+        "DataType": "String",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Name",
+        "DataType": "String",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "MaxLength": "200",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Description",
+        "DataType": "String",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "MaxLength": "200",
+        "IsRequired": "false"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Schedule.ID",
+        "DataType": "Int32",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "false"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "CustomerKey",
+        "DataType": "String",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "MaxLength": "200",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Client.ID",
+        "DataType": "Int64",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "IsActive",
+        "DataType": "Boolean",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "CreatedDate",
+        "DataType": "DateTime",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Client.CreatedBy",
+        "DataType": "Int64",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "ModifiedDate",
+        "DataType": "DateTime",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Client.ModifiedBy",
+        "DataType": "Int64",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Status",
+        "DataType": "Int32",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Client.EnterpriseID",
+        "DataType": "Int64",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "false"
+      }
+    ],
+    "scheduleRelevantProperties": [
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Schedule.ID",
+        "DataType": "Int32",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "false"
+      }
+    ]
+  },
+  "Program": {
+    "soapStatus": "",
+    "requestId": "326135a0-904f-4d99-8837-c9745a2b4be9",
+    "objectType": "Program",
+    "propertyCount": 30,
+    "retrievablePropertyCount": 13,
+    "retrievableProperties": [
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "ObjectID",
+        "DataType": "String",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Name",
+        "DataType": "String",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "MaxLength": "200",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Description",
+        "DataType": "String",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "MaxLength": "200",
+        "IsRequired": "false"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Schedule.ID",
+        "DataType": "Int32",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "false"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "CustomerKey",
+        "DataType": "String",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "MaxLength": "200",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Client.ID",
+        "DataType": "Int64",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "IsActive",
+        "DataType": "Boolean",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "CreatedDate",
+        "DataType": "DateTime",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Client.CreatedBy",
+        "DataType": "Int64",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "ModifiedDate",
+        "DataType": "DateTime",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Client.ModifiedBy",
+        "DataType": "Int64",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Status",
+        "DataType": "Int32",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "true"
+      },
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Client.EnterpriseID",
+        "DataType": "Int64",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "false"
+      }
+    ],
+    "scheduleRelevantProperties": [
+      {
+        "PartnerKey": "",
+        "ObjectID": "",
+        "Name": "Schedule.ID",
+        "DataType": "Int32",
+        "IsUpdatable": "true",
+        "IsRetrievable": "true",
+        "IsRequired": "false"
+      }
+    ]
+  }
+}
