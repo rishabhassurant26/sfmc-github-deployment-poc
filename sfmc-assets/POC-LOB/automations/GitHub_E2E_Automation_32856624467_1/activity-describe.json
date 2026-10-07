@@ -1,9 +1,9 @@
 {
   "soapStatus": "",
-  "requestId": "12d1d2d0-be69-4500-8c51-60ffd8ed7258",
-  "objectType": "Task",
-  "propertyCount": 24,
-  "retrievablePropertyCount": 12,
+  "requestId": "2137bdab-6158-497a-b512-d194390221ae",
+  "objectType": "Activity",
+  "propertyCount": 30,
+  "retrievablePropertyCount": 18,
   "retrievableProperties": [
     {
       "PartnerKey": "",
@@ -26,21 +26,10 @@
     {
       "PartnerKey": "",
       "ObjectID": "",
-      "Name": "Name",
-      "DataType": "String",
-      "IsUpdatable": "false",
+      "Name": "Task.ObjectID",
+      "DataType": "Guid",
+      "IsUpdatable": "true",
       "IsRetrievable": "true",
-      "MaxLength": "255",
-      "IsRequired": "false"
-    },
-    {
-      "PartnerKey": "",
-      "ObjectID": "",
-      "Name": "Description",
-      "DataType": "String",
-      "IsUpdatable": "false",
-      "IsRetrievable": "true",
-      "MaxLength": "255",
       "IsRequired": "false"
     },
     {
@@ -55,6 +44,63 @@
     {
       "PartnerKey": "",
       "ObjectID": "",
+      "Name": "Name",
+      "DataType": "String",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "MaxLength": "200",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Description",
+      "DataType": "String",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "MaxLength": "200",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Definition.ID",
+      "DataType": "Int32",
+      "IsUpdatable": "true",
+      "IsRetrievable": "true",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "Definition.ObjectID",
+      "DataType": "Guid",
+      "IsUpdatable": "true",
+      "IsRetrievable": "true",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "PartnerAPIObjectTypeID",
+      "DataType": "Int32",
+      "IsUpdatable": "true",
+      "IsRetrievable": "true",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "CustomerKey",
+      "DataType": "String",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "MaxLength": "200",
+      "IsRequired": "true"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
       "Name": "Client.ID",
       "DataType": "Int64",
       "IsUpdatable": "true",
@@ -64,9 +110,18 @@
     {
       "PartnerKey": "",
       "ObjectID": "",
-      "Name": "Client.UserID",
-      "DataType": "Int64",
-      "IsUpdatable": "true",
+      "Name": "Definition",
+      "DataType": "APIObject",
+      "IsUpdatable": "false",
+      "IsRetrievable": "true",
+      "IsRequired": "false"
+    },
+    {
+      "PartnerKey": "",
+      "ObjectID": "",
+      "Name": "IsActive",
+      "DataType": "Boolean",
+      "IsUpdatable": "false",
       "IsRetrievable": "true",
       "IsRequired": "true"
     },
@@ -86,7 +141,7 @@
       "DataType": "Int64",
       "IsUpdatable": "true",
       "IsRetrievable": "true",
-      "IsRequired": "false"
+      "IsRequired": "true"
     },
     {
       "PartnerKey": "",
@@ -104,7 +159,7 @@
       "DataType": "Int64",
       "IsUpdatable": "true",
       "IsRetrievable": "true",
-      "IsRequired": "false"
+      "IsRequired": "true"
     },
     {
       "PartnerKey": "",
