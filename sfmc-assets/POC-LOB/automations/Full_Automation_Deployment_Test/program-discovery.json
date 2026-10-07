@@ -1,0 +1,21 @@
+{
+  "status": "PROGRAM_RESOLVED",
+  "soapStatus": "OK",
+  "automation": {
+    "name": "Full Automation Deployment Test",
+    "customerKey": "5fa70271-3cf6-56ed-ee99-22f3fdfb5394"
+  },
+  "program": {
+    "PartnerKey": "",
+    "CreatedDate": "2026-10-07T04:56:22.707",
+    "ModifiedDate": "2026-10-07T04:56:29.7",
+    "ObjectID": "274178d2-a239-4e3e-910a-94a4f0998ee3",
+    "CustomerKey": "5fa70271-3cf6-56ed-ee99-22f3fdfb5394",
+    "Name": "Full Automation Deployment Test",
+    "Description": "",
+    "IsActive": "true",
+    "Status": "2"
+  },
+  "relationshipStatus": "PROGRAM_IDENTITY_ONLY",
+  "relationshipReason": "SFMC returned a Program matching the existing Automation CustomerKey. Task and Activity relationships have not yet been inferred."
+}

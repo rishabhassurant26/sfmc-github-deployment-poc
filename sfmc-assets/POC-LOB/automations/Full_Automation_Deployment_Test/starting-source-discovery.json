@@ -1,0 +1,67 @@
+{
+  "status": "STARTING_SOURCE_DISCOVERY_COMPLETE",
+  "automationName": "Full Automation Deployment Test",
+  "programObjectId": "274178d2-a239-4e3e-910a-94a4f0998ee3",
+  "parents": {
+    "Automation": {
+      "filterProperty": "Name",
+      "properties": [
+        {
+          "property": "AutomationType",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "value": "scheduled"
+        },
+        {
+          "property": "AutomationSource.AutomationSourceID",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "value": null
+        },
+        {
+          "property": "AutomationSource.AutomationSourceType",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "value": null
+        }
+      ]
+    },
+    "Program": {
+      "filterProperty": "ObjectID",
+      "properties": [
+        {
+          "property": "AutomationType",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) AutomationType do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "value": null
+        },
+        {
+          "property": "AutomationSource.AutomationSourceID",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) AutomationSource.AutomationSourceID do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "value": null
+        },
+        {
+          "property": "AutomationSource.AutomationSourceType",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) AutomationSource.AutomationSourceType do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "value": null
+        }
+      ]
+    }
+  },
+  "supportedPropertyChecks": 3,
+  "returnedValueChecks": 1
+}
