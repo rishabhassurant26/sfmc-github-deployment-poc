@@ -1502,8 +1502,8 @@ jobs:
           QUERY_RELATIONSHIP_STATUS: ${{ steps.query_relationship.outputs.relationship_status }}
           QUERY_RELATIONSHIP_COUNT: ${{ steps.query_relationship.outputs.relationship_count }}
 
-          SCHEDULE_DESCRIBE_STATUS: ${{ steps.schedule_describe.outputs.describe_status }}
-          SCHEDULE_PROPERTY_COUNT: ${{ steps.schedule_describe.outputs.property_count }}
+          SCHEDULE_PARENT_DESCRIBE_STATUS: ${{ steps.schedule_parent_describe.outputs.describe_status }}
+          SCHEDULE_RELEVANT_PROPERTY_COUNT: ${{ steps.schedule_parent_describe.outputs.schedule_relevant_count }}
         run: |
           set -euo pipefail
 
@@ -2634,17 +2634,20 @@ jobs:
 
 
       # ============================================================
-      # 15. DESCRIBE SCHEDULEDEFINITION OBJECT
+      # ============================================================
+      # 15. DESCRIBE AUTOMATION + PROGRAM FOR SCHEDULE PROPERTIES
       #
-      # Salesforce documents Automation.Schedule as a
-      # ScheduleDefinition object. Before attempting any schedule
-      # relationship retrieval, discover the actual retrievable /
-      # filterable ScheduleDefinition properties in this BU.
+      # Standalone ScheduleDefinition Describe returned 0 properties
+      # in the live BU, so that route is intentionally not repeated.
+      #
+      # Salesforce documents Automation.Schedule as ScheduleDefinition.
+      # This step discovers what Automation and Program themselves expose
+      # in THIS BU before any nested schedule retrieval is attempted.
       #
       # No schedule relationship is guessed here.
       # ============================================================
-      - name: Describe SFMC ScheduleDefinition object
-        id: schedule_describe
+      - name: Describe Automation and Program schedule properties
+        id: schedule_parent_describe
         shell: bash
         env:
           ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
@@ -2665,138 +2668,205 @@ jobs:
           token = os.environ["ACCESS_TOKEN"]
           soap_url = os.environ["SOAP_URL"].rstrip("/")
 
-          body = f"""<?xml version="1.0" encoding="UTF-8"?>
-          <soapenv:Envelope
-            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-            xmlns:et="http://exacttarget.com/wsdl/partnerAPI">
+          def local_name(tag):
+              return tag.split("}")[-1]
 
-            <soapenv:Header>
-              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
-            </soapenv:Header>
+          def describe(object_type):
+              body = f"""<?xml version="1.0" encoding="UTF-8"?>
+              <soapenv:Envelope
+                xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                xmlns:et="http://exacttarget.com/wsdl/partnerAPI">
 
-            <soapenv:Body>
-              <et:DefinitionRequestMsg>
-                <et:DescribeRequests>
-                  <et:ObjectDefinitionRequest>
-                    <et:ObjectType>ScheduleDefinition</et:ObjectType>
-                  </et:ObjectDefinitionRequest>
-                </et:DescribeRequests>
-              </et:DefinitionRequestMsg>
-            </soapenv:Body>
+                <soapenv:Header>
+                  <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
+                </soapenv:Header>
 
-          </soapenv:Envelope>
-          """
+                <soapenv:Body>
+                  <et:DefinitionRequestMsg>
+                    <et:DescribeRequests>
+                      <et:ObjectDefinitionRequest>
+                        <et:ObjectType>{object_type}</et:ObjectType>
+                      </et:ObjectDefinitionRequest>
+                    </et:DescribeRequests>
+                  </et:DefinitionRequestMsg>
+                </soapenv:Body>
 
-          request = urllib.request.Request(
-              soap_url + "/Service.asmx",
-              data=body.encode("utf-8"),
-              headers={
-                  "Content-Type": "text/xml; charset=UTF-8",
-                  "SOAPAction": "Describe"
-              },
-              method="POST"
-          )
+              </soapenv:Envelope>
+              """
 
-          try:
-              with urllib.request.urlopen(request) as response:
-                  xml_data = response.read()
-          except urllib.error.HTTPError as exc:
-              response_text = exc.read().decode(
-                  "utf-8",
-                  errors="replace"
-              )
-              print(response_text)
-              raise SystemExit(
-                  f"ScheduleDefinition Describe HTTP {exc.code}"
+              request = urllib.request.Request(
+                  soap_url + "/Service.asmx",
+                  data=body.encode("utf-8"),
+                  headers={
+                      "Content-Type": "text/xml; charset=UTF-8",
+                      "SOAPAction": "Describe"
+                  },
+                  method="POST"
               )
 
-          with open(
-              "schedule-describe-response.xml",
-              "wb"
-          ) as f:
-              f.write(xml_data)
+              try:
+                  with urllib.request.urlopen(request) as response:
+                      xml_data = response.read()
+              except urllib.error.HTTPError as exc:
+                  response_text = exc.read().decode(
+                      "utf-8",
+                      errors="replace"
+                  )
+                  print(response_text)
+                  raise SystemExit(
+                      f"{object_type} Describe HTTP {exc.code}"
+                  )
 
-          root = ET.fromstring(xml_data)
+              with open(
+                  f"{object_type.lower()}-describe-response.xml",
+                  "wb"
+              ) as f:
+                  f.write(xml_data)
 
-          overall = ""
-          request_id = ""
-          properties = []
+              root = ET.fromstring(xml_data)
 
-          for element in root.iter():
-              local = element.tag.split("}")[-1]
+              overall = ""
+              request_id = ""
+              properties = []
 
-              if local == "OverallStatus":
-                  overall = (element.text or "").strip()
+              for element in root.iter():
+                  name = local_name(element.tag)
 
-              elif local == "RequestID":
-                  request_id = (element.text or "").strip()
+                  if name == "OverallStatus":
+                      overall = (element.text or "").strip()
 
-              elif local == "Properties":
-                  prop = {}
+                  elif name == "RequestID":
+                      request_id = (element.text or "").strip()
 
-                  for child in list(element):
-                      key = child.tag.split("}")[-1]
-                      prop[key] = (child.text or "").strip()
+                  elif name == "Properties":
+                      prop = {}
 
-                  if prop.get("Name"):
-                      properties.append(prop)
+                      for child in list(element):
+                          prop[local_name(child.tag)] = (
+                              child.text or ""
+                          ).strip()
 
-          retrievable = [
-              prop
-              for prop in properties
-              if prop.get(
-                  "IsRetrievable",
-                  ""
-              ).lower() == "true"
-          ]
+                      if prop.get("Name"):
+                          properties.append(prop)
 
-          print("")
-          print("============================================")
-          print("SCHEDULEDEFINITION OBJECT DESCRIBE")
-          print("============================================")
-          print("SOAP Status:", overall)
-          print("Properties returned:", len(properties))
-          print("Retrievable properties:", len(retrievable))
-          print("")
+              retrievable = [
+                  prop
+                  for prop in properties
+                  if prop.get(
+                      "IsRetrievable",
+                      ""
+                  ).lower() == "true"
+              ]
 
-          for prop in retrievable:
-              print(
-                  prop.get("Name", ""),
-                  "| Type:",
-                  prop.get("DataType", ""),
-                  "| Filterable:",
-                  prop.get("IsFilterable", "")
-              )
+              # Show schedule/source/time-related properties prominently,
+              # but preserve the full retrievable list in JSON evidence.
+              relevant = []
 
-          print("============================================")
+              for prop in retrievable:
+                  prop_name = prop.get("Name", "")
+                  lowered = prop_name.lower()
 
-          result = {
-              "soapStatus": overall,
-              "requestId": request_id,
-              "objectType": "ScheduleDefinition",
-              "propertyCount": len(properties),
-              "retrievablePropertyCount": len(retrievable),
-              "retrievableProperties": retrievable
+                  if any(
+                      token_text in lowered
+                      for token_text in (
+                          "schedule",
+                          "source",
+                          "time",
+                          "recurrence",
+                          "occurrence"
+                      )
+                  ):
+                      relevant.append(prop)
+
+              return {
+                  "soapStatus": overall,
+                  "requestId": request_id,
+                  "objectType": object_type,
+                  "propertyCount": len(properties),
+                  "retrievablePropertyCount": len(retrievable),
+                  "retrievableProperties": retrievable,
+                  "scheduleRelevantProperties": relevant
+              }
+
+          results = {
+              "Automation": describe("Automation"),
+              "Program": describe("Program")
           }
 
+          print("")
+          print("============================================")
+          print("AUTOMATION + PROGRAM DESCRIBE")
+          print("============================================")
+
+          total_retrievable = 0
+          total_relevant = 0
+
+          for object_type in ("Automation", "Program"):
+              result = results[object_type]
+
+              print("")
+              print(object_type)
+              print("--------------------------------------------")
+              print("SOAP Status:", result["soapStatus"])
+              print(
+                  "Properties returned:",
+                  result["propertyCount"]
+              )
+              print(
+                  "Retrievable properties:",
+                  result["retrievablePropertyCount"]
+              )
+              print("")
+
+              total_retrievable += (
+                  result["retrievablePropertyCount"]
+              )
+
+              relevant = result[
+                  "scheduleRelevantProperties"
+              ]
+
+              total_relevant += len(relevant)
+
+              if relevant:
+                  print(
+                      "Schedule/source/time-related "
+                      "retrievable properties:"
+                  )
+
+                  for prop in relevant:
+                      print(
+                          prop.get("Name", ""),
+                          "| Type:",
+                          prop.get("DataType", ""),
+                          "| Filterable:",
+                          prop.get("IsFilterable", "")
+                      )
+              else:
+                  print(
+                      "No schedule/source/time-related "
+                      "retrievable properties discovered."
+                  )
+
+          print("")
+          print("============================================")
+
           with open(
-              "schedule-describe.json",
+              "schedule-parent-describe.json",
               "w",
               encoding="utf-8"
           ) as f:
               json.dump(
-                  result,
+                  results,
                   f,
                   indent=2,
                   ensure_ascii=False
               )
 
-          # As already observed for Task/Activity Describe,
-          # SFMC can return valid properties with blank OverallStatus.
-          if not retrievable:
+          if total_retrievable == 0:
               raise SystemExit(
-                  "ScheduleDefinition Describe returned no "
-                  "retrievable properties."
+                  "Automation and Program Describe returned "
+                  "no retrievable properties."
               )
 
           with open(
@@ -2805,13 +2875,19 @@ jobs:
           ) as f:
               f.write("describe_status=SUCCESS\n")
               f.write(
-                  "property_count="
-                  + str(len(retrievable))
+                  "schedule_relevant_count="
+                  + str(total_relevant)
                   + "\n"
               )
 
           print("")
-          print("RESULT: SCHEDULEDEFINITION SCHEMA DISCOVERED")
+          print(
+              "RESULT: AUTOMATION + PROGRAM SCHEMA DISCOVERED"
+          )
+          print(
+              "Schedule-relevant properties discovered:",
+              total_relevant
+          )
           PY
 
 
@@ -3236,15 +3312,17 @@ jobs:
               "$OUTPUT_DIR/query-relationship.json"
           fi
 
-          if [ -f schedule-describe.json ]; then
-            cp schedule-describe.json \
-              "$OUTPUT_DIR/schedule-describe.json"
+          if [ -f schedule-parent-describe.json ]; then
+            cp schedule-parent-describe.json \
+              "$OUTPUT_DIR/schedule-parent-describe.json"
           fi
 
-          if [ -f schedule-describe-response.xml ]; then
-            cp schedule-describe-response.xml \
-              "$OUTPUT_DIR/schedule-describe-response.xml"
-          fi
+          for RESPONSE_FILE in automation-describe-response.xml program-describe-response.xml; do
+            if [ -f "$RESPONSE_FILE" ]; then
+              cp "$RESPONSE_FILE" \
+                "$OUTPUT_DIR/$RESPONSE_FILE"
+            fi
+          done
 
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
@@ -3346,15 +3424,15 @@ jobs:
               "$OUTPUT_DIR/query-relationship.json"
           fi
 
-          if [ -f "$OUTPUT_DIR/schedule-describe.json" ]; then
+          if [ -f "$OUTPUT_DIR/schedule-parent-describe.json" ]; then
 
             echo ""
             echo "============================================"
-            echo "SCHEDULEDEFINITION OBJECT DESCRIBE"
+            echo "AUTOMATION + PROGRAM DESCRIBE"
             echo "============================================"
 
             jq . \
-              "$OUTPUT_DIR/schedule-describe.json"
+              "$OUTPUT_DIR/schedule-parent-describe.json"
           fi
 
 
@@ -3518,12 +3596,12 @@ jobs:
           echo "${QUERY_RELATIONSHIP_COUNT:-0}"
 
           echo ""
-          echo "ScheduleDefinition Describe status:"
-          echo "${SCHEDULE_DESCRIBE_STATUS:-[not available]}"
+          echo "Automation + Program Describe status:"
+          echo "${SCHEDULE_PARENT_DESCRIBE_STATUS:-[not available]}"
 
           echo ""
-          echo "ScheduleDefinition retrievable properties:"
-          echo "${SCHEDULE_PROPERTY_COUNT:-0}"
+          echo "Schedule/source/time-related properties discovered:"
+          echo "${SCHEDULE_RELEVANT_PROPERTY_COUNT:-0}"
 
           echo ""
           echo "IMPORTANT:"
