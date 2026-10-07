@@ -1511,6 +1511,10 @@ jobs:
           NESTED_SCHEDULE_STATUS: ${{ steps.nested_schedule.outputs.discovery_status }}
           NESTED_SCHEDULE_SUPPORTED_CHECKS: ${{ steps.nested_schedule.outputs.supported_checks }}
           NESTED_SCHEDULE_RETURNED_VALUES: ${{ steps.nested_schedule.outputs.returned_value_checks }}
+
+          STARTING_SOURCE_STATUS: ${{ steps.starting_source.outputs.discovery_status }}
+          STARTING_SOURCE_SUPPORTED_CHECKS: ${{ steps.starting_source.outputs.supported_checks }}
+          STARTING_SOURCE_RETURNED_VALUES: ${{ steps.starting_source.outputs.returned_value_checks }}
         run: |
           set -euo pipefail
 
@@ -3499,7 +3503,277 @@ jobs:
           PY
 
 
-      # 18. BUILD DEFINITION
+      # ============================================================
+      # 18. DISCOVER STARTING-SOURCE PROPERTIES
+      #
+      # Salesforce documents AutomationSource on Automation and
+      # AutomationInstance, with:
+      #   AutomationSource.AutomationSourceID
+      #   AutomationSource.AutomationSourceType
+      #
+      # Automation also documents AutomationType.
+      #
+      # This step tests those properties independently through the
+      # already-resolved Automation/Program parents. It does NOT infer
+      # Schedule/FileDrop/Trigger from Status or Schedule.ID.
+      # ============================================================
+      - name: Discover Automation starting source
+        id: starting_source
+        continue-on-error: true
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+          PROGRAM_OBJECT_ID: ${{ steps.program_discovery.outputs.program_object_id }}
+          AUTOMATION_NAME: ${{ inputs.automation_name }}
+        run: |
+          set -euo pipefail
+
+          export ACCESS_TOKEN SOAP_URL PROGRAM_OBJECT_ID AUTOMATION_NAME
+
+          python3 <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+          from xml.sax.saxutils import escape
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+          program_object_id = (os.environ.get("PROGRAM_OBJECT_ID", "") or "").strip()
+          automation_name = (os.environ.get("AUTOMATION_NAME", "") or "").strip()
+
+          if not program_object_id:
+              raise SystemExit("Resolved Program ObjectID is unavailable.")
+          if not automation_name:
+              raise SystemExit("Automation name is unavailable.")
+
+          candidates = [
+              "AutomationType",
+              "AutomationSource.AutomationSourceID",
+              "AutomationSource.AutomationSourceType"
+          ]
+
+          xsi_ns = "http://www.w3.org/2001/XMLSchema-instance"
+
+          def lname(tag):
+              return tag.split("}")[-1]
+
+          def retrieve(object_type, filter_property, filter_value, prop):
+              body = f"""<?xml version="1.0" encoding="UTF-8"?>
+              <soapenv:Envelope
+                xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                xmlns:et="http://exacttarget.com/wsdl/partnerAPI"
+                xmlns:xsi="{xsi_ns}">
+                <soapenv:Header>
+                  <fueloauth xmlns="http://exacttarget.com">{escape(token)}</fueloauth>
+                </soapenv:Header>
+                <soapenv:Body>
+                  <et:RetrieveRequestMsg>
+                    <et:RetrieveRequest>
+                      <et:ObjectType>{object_type}</et:ObjectType>
+                      <et:Properties>ObjectID</et:Properties>
+                      <et:Properties>{prop}</et:Properties>
+                      <et:Filter xsi:type="et:SimpleFilterPart">
+                        <et:Property>{filter_property}</et:Property>
+                        <et:SimpleOperator>equals</et:SimpleOperator>
+                        <et:Value>{escape(filter_value)}</et:Value>
+                      </et:Filter>
+                    </et:RetrieveRequest>
+                  </et:RetrieveRequestMsg>
+                </soapenv:Body>
+              </soapenv:Envelope>"""
+
+              req = urllib.request.Request(
+                  soap_url + "/Service.asmx",
+                  data=body.encode("utf-8"),
+                  headers={
+                      "Content-Type": "text/xml; charset=UTF-8",
+                      "SOAPAction": "Retrieve"
+                  },
+                  method="POST"
+              )
+
+              try:
+                  with urllib.request.urlopen(req) as response:
+                      raw = response.read()
+                  http_status = 200
+              except urllib.error.HTTPError as exc:
+                  raw = exc.read()
+                  http_status = exc.code
+
+              root = ET.fromstring(raw)
+              overall = ""
+              error = ""
+              parsed = []
+
+              for element in root.iter():
+                  name = lname(element.tag)
+
+                  if name == "OverallStatus":
+                      overall = (element.text or "").strip()
+                  elif name in ("StatusMessage", "ErrorMessage"):
+                      value = (element.text or "").strip()
+                      if value:
+                          error = value
+                  elif name == "Results":
+                      item = {
+                          "ObjectID": "",
+                          "AutomationType": "",
+                          "AutomationSource": {
+                              "AutomationSourceID": "",
+                              "AutomationSourceType": ""
+                          }
+                      }
+
+                      for child in list(element):
+                          cname = lname(child.tag)
+
+                          if cname == "ObjectID":
+                              item["ObjectID"] = (child.text or "").strip()
+                          elif cname == "AutomationType":
+                              item["AutomationType"] = (child.text or "").strip()
+                          elif cname == "AutomationSource":
+                              for nested in list(child):
+                                  nname = lname(nested.tag)
+                                  if nname in (
+                                      "AutomationSourceID",
+                                      "AutomationSourceType"
+                                  ):
+                                      item["AutomationSource"][nname] = (
+                                          nested.text or ""
+                                      ).strip()
+
+                      if (
+                          item["ObjectID"]
+                          or item["AutomationType"]
+                          or any(item["AutomationSource"].values())
+                      ):
+                          parsed.append(item)
+
+              return {
+                  "httpStatus": http_status,
+                  "soapStatus": overall,
+                  "errorMessage": error,
+                  "results": parsed,
+                  "raw": raw
+              }
+
+          parents = [
+              ("Automation", "Name", automation_name),
+              ("Program", "ObjectID", program_object_id)
+          ]
+
+          evidence = {
+              "status": "",
+              "automationName": automation_name,
+              "programObjectId": program_object_id,
+              "parents": {}
+          }
+
+          supported_checks = 0
+          value_checks = 0
+
+          print("")
+          print("============================================")
+          print("AUTOMATION STARTING-SOURCE DISCOVERY")
+          print("============================================")
+
+          for object_type, filter_property, filter_value in parents:
+              print("")
+              print(object_type)
+              print("--------------------------------------------")
+
+              entries = []
+
+              for index, prop in enumerate(candidates, start=1):
+                  result = retrieve(
+                      object_type,
+                      filter_property,
+                      filter_value,
+                      prop
+                  )
+
+                  raw_name = (
+                      f"starting-source-{object_type.lower()}-{index}.xml"
+                  )
+                  with open(raw_name, "wb") as f:
+                      f.write(result["raw"])
+
+                  supported = (
+                      result["httpStatus"] == 200
+                      and result["soapStatus"] in ("OK", "MoreDataAvailable")
+                  )
+
+                  value = None
+                  if result["results"]:
+                      row = result["results"][0]
+
+                      if prop == "AutomationType":
+                          value = row.get("AutomationType", "")
+                      else:
+                          leaf = prop.split(".", 1)[1]
+                          value = row.get(
+                              "AutomationSource",
+                              {}
+                          ).get(leaf, "")
+
+                  if supported:
+                      supported_checks += 1
+                  if value not in (None, ""):
+                      value_checks += 1
+
+                  entries.append({
+                      "property": prop,
+                      "supported": supported,
+                      "httpStatus": result["httpStatus"],
+                      "soapStatus": result["soapStatus"],
+                      "errorMessage": result["errorMessage"],
+                      "value": value
+                  })
+
+                  print(
+                      prop,
+                      "| Supported:", supported,
+                      "| SOAP:", result["soapStatus"] or "[blank]",
+                      "| Value:",
+                      value if value not in (None, "") else "[not returned]"
+                  )
+
+                  if result["errorMessage"]:
+                      print("  Error:", result["errorMessage"])
+
+              evidence["parents"][object_type] = {
+                  "filterProperty": filter_property,
+                  "properties": entries
+              }
+
+          evidence["supportedPropertyChecks"] = supported_checks
+          evidence["returnedValueChecks"] = value_checks
+          evidence["status"] = "STARTING_SOURCE_DISCOVERY_COMPLETE"
+
+          with open(
+              "starting-source-discovery.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(evidence, f, indent=2, ensure_ascii=False)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("discovery_status=STARTING_SOURCE_DISCOVERY_COMPLETE\n")
+              f.write(f"supported_checks={supported_checks}\n")
+              f.write(f"returned_value_checks={value_checks}\n")
+
+          print("")
+          print("RESULT: AUTOMATION STARTING-SOURCE DISCOVERY COMPLETE")
+          print("Supported property checks:", supported_checks)
+          print("Checks returning a non-empty value:", value_checks)
+          print("============================================")
+          PY
+
+
+      # 19. BUILD DEFINITION
       #
       # IMPORTANT:
       # Program discovery is recorded as discovery evidence only.
@@ -3829,7 +4103,7 @@ jobs:
 
 
       # ============================================================
-      # 19. SAVE RESULT
+      # 20. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -3954,6 +4228,18 @@ jobs:
             fi
           done
 
+          if [ -f starting-source-discovery.json ]; then
+            cp starting-source-discovery.json \
+              "$OUTPUT_DIR/starting-source-discovery.json"
+          fi
+
+          for RESPONSE_FILE in starting-source-*.xml; do
+            if [ -f "$RESPONSE_FILE" ]; then
+              cp "$RESPONSE_FILE" \
+                "$OUTPUT_DIR/$RESPONSE_FILE"
+            fi
+          done
+
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Saved to:"
@@ -3961,7 +4247,7 @@ jobs:
 
 
       # ============================================================
-      # 20. DISPLAY RESULT
+      # 21. DISPLAY RESULT
       # ============================================================
       - name: Display retrieved definition
         shell: bash
@@ -4085,9 +4371,18 @@ jobs:
               "$OUTPUT_DIR/nested-schedule-discovery.json"
           fi
 
+          if [ -f "$OUTPUT_DIR/starting-source-discovery.json" ]; then
+            echo ""
+            echo "============================================"
+            echo "AUTOMATION STARTING-SOURCE DISCOVERY"
+            echo "============================================"
+            jq . \
+              "$OUTPUT_DIR/starting-source-discovery.json"
+          fi
+
 
       # ============================================================
-      # 21. COMMIT
+      # 22. COMMIT
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -4121,7 +4416,7 @@ jobs:
 
 
       # ============================================================
-      # 22. FINAL RESULT
+      # 23. FINAL RESULT
       # ============================================================
       - name: Retrieval complete
         shell: bash
@@ -4272,6 +4567,18 @@ jobs:
           echo ""
           echo "Nested Schedule checks returning values:"
           echo "${NESTED_SCHEDULE_RETURNED_VALUES:-0}"
+
+          echo ""
+          echo "Starting-source discovery status:"
+          echo "${STARTING_SOURCE_STATUS:-[not available]}"
+
+          echo ""
+          echo "Starting-source supported property checks:"
+          echo "${STARTING_SOURCE_SUPPORTED_CHECKS:-0}"
+
+          echo ""
+          echo "Starting-source checks returning values:"
+          echo "${STARTING_SOURCE_RETURNED_VALUES:-0}"
 
           echo ""
           echo "IMPORTANT:"
