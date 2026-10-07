@@ -1,0 +1,21 @@
+{
+  "status": "PROGRAM_RESOLVED",
+  "soapStatus": "OK",
+  "automation": {
+    "name": "Consolidated BU Data",
+    "customerKey": "4ac83f70-5116-9ecd-1aa5-2907523f1ecf"
+  },
+  "program": {
+    "PartnerKey": "",
+    "CreatedDate": "2026-07-01T23:45:35.997",
+    "ModifiedDate": "2026-07-06T13:48:41.983",
+    "ObjectID": "4e5b310e-0d22-490c-9a57-d0f297479852",
+    "CustomerKey": "4ac83f70-5116-9ecd-1aa5-2907523f1ecf",
+    "Name": "Consolidated BU Data",
+    "Description": "",
+    "IsActive": "true",
+    "Status": "2"
+  },
+  "relationshipStatus": "PROGRAM_IDENTITY_ONLY",
+  "relationshipReason": "SFMC returned a Program matching the existing Automation CustomerKey. Task and Activity relationships have not yet been inferred."
+}

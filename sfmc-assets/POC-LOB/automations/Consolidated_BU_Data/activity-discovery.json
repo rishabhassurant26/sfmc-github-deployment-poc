@@ -1,0 +1,43 @@
+{
+  "status": "ACTIVITIES_RESOLVED",
+  "tasksChecked": 1,
+  "taskObjectIds": [
+    "585c93d1-d1f7-4b83-a068-1f6d7edd6960"
+  ],
+  "soapResults": [
+    {
+      "taskObjectId": "585c93d1-d1f7-4b83-a068-1f6d7edd6960",
+      "soapStatus": "OK",
+      "requestId": "6d83b030-9104-48e7-a922-0ef6a0933bdd",
+      "activitiesReturned": 1
+    }
+  ],
+  "activitiesReturned": 1,
+  "activities": [
+    {
+      "PartnerKey": "",
+      "ObjectID": "b61930b2-1baa-42c8-8e22-354978db60e8",
+      "CustomerKey": "bd10edb2-c8d1-4407-9bab-389429772481",
+      "Name": "Consolidated BU Data",
+      "Description": "",
+      "IsActive": "true",
+      "Definition": {
+        "PartnerKey": "",
+        "ObjectID": "939eec03-f86d-4973-8b6f-3b462b8f8b9e"
+      },
+      "Program": {
+        "PartnerKey": "",
+        "ObjectID": "4e5b310e-0d22-490c-9a57-d0f297479852"
+      },
+      "Task": {
+        "PartnerKey": "",
+        "ObjectID": "585c93d1-d1f7-4b83-a068-1f6d7edd6960"
+      },
+      "Sequence": "0",
+      "_sourceTaskObjectId": "585c93d1-d1f7-4b83-a068-1f6d7edd6960"
+    }
+  ],
+  "rawResponseFiles": [
+    "activity-retrieve-response-1.xml"
+  ]
+}
