@@ -1,0 +1,151 @@
+{
+  "status": "NESTED_SCHEDULE_DISCOVERY_COMPLETE",
+  "programObjectId": "46405579-6981-4b47-bd18-190fe031b317",
+  "automationName": "POC_Filter_Active_Customers",
+  "parents": {
+    "Program": {
+      "filterProperty": "ObjectID",
+      "properties": [
+        {
+          "property": "Schedule.ID",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "returnedSchedule": {
+            "PartnerKey": "",
+            "ID": "0",
+            "ObjectID": ""
+          }
+        },
+        {
+          "property": "Schedule.StartDateTime",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) Schedule.StartDateTime do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.EndDateTime",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) Schedule.EndDateTime do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.RecurrenceType",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) Schedule.RecurrenceType do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.RecurrenceRangeType",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) Schedule.RecurrenceRangeType do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.Occurrences",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) Schedule.Occurrences do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.TimeZone",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) Schedule.TimeZone do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.Recurrence",
+          "supported": false,
+          "httpStatus": 200,
+          "soapStatus": "Error: The Request Property(s) Schedule.Recurrence do not match with the fields of Program retrieve",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        }
+      ]
+    },
+    "Automation": {
+      "filterProperty": "Name",
+      "properties": [
+        {
+          "property": "Schedule.ID",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.StartDateTime",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.EndDateTime",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.RecurrenceType",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.RecurrenceRangeType",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.Occurrences",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.TimeZone",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        },
+        {
+          "property": "Schedule.Recurrence",
+          "supported": true,
+          "httpStatus": 200,
+          "soapStatus": "OK",
+          "errorMessage": "",
+          "returnedSchedule": {}
+        }
+      ]
+    }
+  },
+  "supportedPropertyChecks": 9,
+  "returnedValueChecks": 1
+}

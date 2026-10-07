@@ -1,0 +1,24 @@
+[
+  {
+    "customerKey": "239FAE0C-BA36-4038-853E-D6F808544468",
+    "name": "POC_Customers_Source",
+    "roles": [
+      "source"
+    ],
+    "queryDefinitions": [
+      "ABFA8D84-C7A1-4D04-AF31-1E71CC238287"
+    ],
+    "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/239FAE0C-BA36-4038-853E-D6F808544468/definition.json"
+  },
+  {
+    "customerKey": "71E94E90-4129-4E29-B1FC-CD36B5A34222",
+    "name": "POC_Customers_Filtered",
+    "roles": [
+      "target"
+    ],
+    "queryDefinitions": [
+      "ABFA8D84-C7A1-4D04-AF31-1E71CC238287"
+    ],
+    "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/71E94E90-4129-4E29-B1FC-CD36B5A34222/definition.json"
+  }
+]

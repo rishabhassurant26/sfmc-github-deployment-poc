@@ -1,0 +1,65 @@
+{
+  "assetType": "DataExtension",
+  "name": "POC_Customers_Filtered",
+  "customerKey": "71E94E90-4129-4E29-B1FC-CD36B5A34222",
+  "description": "",
+  "isSendable": false,
+  "isTestable": false,
+  "fields": [
+    {
+      "name": "CustomerID",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": true,
+      "defaultValue": null,
+      "ordinal": 0,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "FirstName",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 1,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "EmailAddress",
+      "fieldType": "EmailAddress",
+      "maxLength": 254,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 2,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "Status",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 3,
+      "precision": null,
+      "scale": 0
+    },
+    {
+      "name": "City",
+      "fieldType": "Text",
+      "maxLength": 50,
+      "isPrimaryKey": false,
+      "isRequired": false,
+      "defaultValue": null,
+      "ordinal": 4,
+      "precision": null,
+      "scale": 0
+    }
+  ]
+}
