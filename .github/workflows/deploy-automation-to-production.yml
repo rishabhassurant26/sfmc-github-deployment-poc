@@ -211,7 +211,7 @@ jobs:
           echo "Production authentication successful."
           echo "Production MID: $MID"
 
-      - name: Deploy SQL Query Automation structure
+      - name: Deploy or compare SQL Query Automation structure
         shell: bash
         env:
           FILE: ${{ steps.config.outputs.definition }}
@@ -428,18 +428,346 @@ jobs:
           automation = definition["automation"]
           tasks = definition["tasks"]
 
-          # Fail closed. This first Production workflow creates structure only.
+          # If the Automation already exists, perform a READ-ONLY structural
+          # comparison. No Create/Update/Delete/Perform call is made on this path.
           existing_automation = retrieve(
               "Automation",
               ["CustomerKey", "Name", "Status"],
               "CustomerKey",
               automation["customerKey"],
           )
+
           if existing_automation:
-              raise RuntimeError(
-                  f"Production Automation {automation['customerKey']} already exists. "
-                  "CREATE-only POC will not overwrite it."
+              exact_automations = [
+                  item for item in existing_automation
+                  if child_text(item, "CustomerKey") == automation["customerKey"]
+              ]
+
+              if len(exact_automations) != 1:
+                  raise RuntimeError(
+                      f"Expected exactly one Production Automation for "
+                      f"{automation['customerKey']}; got {len(exact_automations)}."
+                  )
+
+              differences = []
+
+              production_automation_name = child_text(
+                  exact_automations[0], "Name"
               )
+              if production_automation_name != automation["name"]:
+                  differences.append(
+                      "Automation name: "
+                      f"source={automation['name']!r}, "
+                      f"production={production_automation_name!r}"
+                  )
+
+              programs = retrieve(
+                  "Program",
+                  ["ObjectID", "CustomerKey", "Name", "Status"],
+                  "CustomerKey",
+                  automation["customerKey"],
+              )
+              programs = [
+                  item for item in programs
+                  if child_text(item, "CustomerKey") == automation["customerKey"]
+              ]
+
+              if len(programs) != 1:
+                  raise RuntimeError(
+                      f"Expected exactly one Production Program for "
+                      f"{automation['customerKey']}; got {len(programs)}."
+                  )
+
+              program_id = child_text(programs[0], "ObjectID")
+              if not program_id:
+                  raise RuntimeError(
+                      "Production Program ObjectID was not returned."
+                  )
+
+              production_tasks = retrieve(
+                  "Task",
+                  ["ObjectID", "Program.ObjectID", "Name", "Sequence"],
+                  "Program.ObjectID",
+                  program_id,
+              )
+
+              source_tasks = sorted(
+                  tasks,
+                  key=lambda item: int(item.get("sequence", 0)),
+              )
+              production_tasks = sorted(
+                  production_tasks,
+                  key=lambda item: int(child_text(item, "Sequence") or 0),
+              )
+
+              if len(production_tasks) != len(source_tasks):
+                  differences.append(
+                      "Task count: "
+                      f"source={len(source_tasks)}, "
+                      f"production={len(production_tasks)}"
+                  )
+              else:
+                  for source_task, production_task in zip(
+                      source_tasks, production_tasks
+                  ):
+                      source_task_sequence = int(
+                          source_task.get("sequence", 0)
+                      )
+                      production_task_sequence = int(
+                          child_text(production_task, "Sequence") or 0
+                      )
+
+                      if source_task_sequence != production_task_sequence:
+                          differences.append(
+                              "Task sequence: "
+                              f"source={source_task_sequence}, "
+                              f"production={production_task_sequence}"
+                          )
+
+                      source_task_name = source_task.get("name") or ""
+                      production_task_name = child_text(
+                          production_task, "Name"
+                      )
+                      if source_task_name != production_task_name:
+                          differences.append(
+                              "Task name at sequence "
+                              f"{source_task_sequence}: "
+                              f"source={source_task_name!r}, "
+                              f"production={production_task_name!r}"
+                          )
+
+                      task_id = child_text(production_task, "ObjectID")
+                      if not task_id:
+                          differences.append(
+                              f"Production Task at sequence "
+                              f"{production_task_sequence} has no ObjectID."
+                          )
+                          continue
+
+                      production_activities = retrieve(
+                          "Activity",
+                          [
+                              "ObjectID",
+                              "Task.ObjectID",
+                              "Definition.ObjectID",
+                              "CustomerKey",
+                              "Name",
+                              "Sequence",
+                          ],
+                          "Task.ObjectID",
+                          task_id,
+                      )
+
+                      source_activities = sorted(
+                          source_task.get("activities") or [],
+                          key=lambda item: int(item.get("sequence", 0)),
+                      )
+                      production_activities = sorted(
+                          production_activities,
+                          key=lambda item: int(
+                              child_text(item, "Sequence") or 0
+                          ),
+                      )
+
+                      if len(production_activities) != len(source_activities):
+                          differences.append(
+                              "Activity count for task sequence "
+                              f"{source_task_sequence}: "
+                              f"source={len(source_activities)}, "
+                              f"production={len(production_activities)}"
+                          )
+                          continue
+
+                      for source_activity, production_activity in zip(
+                          source_activities, production_activities
+                      ):
+                          source_activity_sequence = int(
+                              source_activity.get("sequence", 0)
+                          )
+                          production_activity_sequence = int(
+                              child_text(
+                                  production_activity, "Sequence"
+                              ) or 0
+                          )
+
+                          if (
+                              source_activity_sequence
+                              != production_activity_sequence
+                          ):
+                              differences.append(
+                                  "Activity sequence: "
+                                  f"source={source_activity_sequence}, "
+                                  f"production="
+                                  f"{production_activity_sequence}"
+                              )
+
+                          source_activity_name = (
+                              source_activity.get("name") or ""
+                          )
+                          production_activity_name = child_text(
+                              production_activity, "Name"
+                          )
+                          if (
+                              source_activity_name
+                              != production_activity_name
+                          ):
+                              differences.append(
+                                  "Activity name at task/activity "
+                                  f"{source_task_sequence}/"
+                                  f"{source_activity_sequence}: "
+                                  f"source={source_activity_name!r}, "
+                                  f"production="
+                                  f"{production_activity_name!r}"
+                              )
+
+                          source_activity_key = (
+                              source_activity.get("customerKey") or ""
+                          )
+                          production_activity_key = child_text(
+                              production_activity, "CustomerKey"
+                          )
+                          if (
+                              source_activity_key
+                              and source_activity_key
+                              != production_activity_key
+                          ):
+                              differences.append(
+                                  "Activity CustomerKey at task/activity "
+                                  f"{source_task_sequence}/"
+                                  f"{source_activity_sequence}: "
+                                  f"source={source_activity_key!r}, "
+                                  f"production="
+                                  f"{production_activity_key!r}"
+                              )
+
+                          source_query = source_activity["definition"]
+                          source_target = source_query[
+                              "targetDataExtension"
+                          ]
+                          production_query = get_query(
+                              source_query["customerKey"]
+                          )
+
+                          if production_query is None:
+                              differences.append(
+                                  "QueryDefinition missing in Production: "
+                                  f"{source_query['customerKey']}"
+                              )
+                              continue
+
+                          definition_object_id = child_text(
+                              production_activity,
+                              "Definition.ObjectID",
+                          )
+                          if (
+                              definition_object_id
+                              != production_query["objectId"]
+                          ):
+                              differences.append(
+                                  "Activity -> QueryDefinition ObjectID "
+                                  "relationship differs for "
+                                  f"{source_query['customerKey']}: "
+                                  f"activity={definition_object_id!r}, "
+                                  f"query="
+                                  f"{production_query['objectId']!r}"
+                              )
+
+                          if (
+                              production_query["name"]
+                              != source_query["name"]
+                          ):
+                              differences.append(
+                                  "Query name: "
+                                  f"source={source_query['name']!r}, "
+                                  f"production="
+                                  f"{production_query['name']!r}"
+                              )
+
+                          if (
+                              normalize_sql(
+                                  production_query["queryText"]
+                              )
+                              != normalize_sql(
+                                  source_query["queryText"]
+                              )
+                          ):
+                              differences.append(
+                                  "QueryText differs for "
+                                  f"{source_query['customerKey']}"
+                              )
+
+                          if (
+                              production_query["targetType"]
+                              != source_query["targetType"]
+                          ):
+                              differences.append(
+                                  "Query TargetType for "
+                                  f"{source_query['customerKey']}: "
+                                  f"source={source_query['targetType']!r}, "
+                                  f"production="
+                                  f"{production_query['targetType']!r}"
+                              )
+
+                          if (
+                              production_query["targetUpdateType"]
+                              != source_query["targetUpdateType"]
+                          ):
+                              differences.append(
+                                  "Query TargetUpdateType for "
+                                  f"{source_query['customerKey']}: "
+                                  f"source="
+                                  f"{source_query['targetUpdateType']!r}, "
+                                  f"production="
+                                  f"{production_query['targetUpdateType']!r}"
+                              )
+
+                          if (
+                              production_query["target"].get(
+                                  "customerKey"
+                              )
+                              != source_target["customerKey"]
+                          ):
+                              differences.append(
+                                  "Query target DE CustomerKey for "
+                                  f"{source_query['customerKey']}: "
+                                  f"source="
+                                  f"{source_target['customerKey']!r}, "
+                                  f"production="
+                                  f"{production_query['target'].get('customerKey')!r}"
+                              )
+
+              print("")
+              print("==========================================")
+              print("PRODUCTION AUTOMATION READ-ONLY COMPARISON")
+              print("==========================================")
+              print("Automation:", automation["name"])
+              print("CustomerKey:", automation["customerKey"])
+              print("Program ObjectID:", program_id)
+              print("Schedule changed: NO")
+              print("Activated: NO")
+              print("Executed: NO")
+              print("Create/Update/Delete performed: NO")
+
+              if differences:
+                  print("")
+                  print("RESULT: DIFFERENCES FOUND")
+                  for index, difference in enumerate(differences, start=1):
+                      print(f"{index}. {difference}")
+                  print("==========================================")
+                  raise RuntimeError(
+                      "Existing Production Automation differs from the "
+                      "approved Sandbox definition. Read-only comparison "
+                      "completed; no Production changes were made."
+                  )
+
+              print("")
+              print("RESULT: MATCH")
+              print(
+                  "Existing Production Automation matches the approved "
+                  "Sandbox definition for the compared SQL structure."
+              )
+              print("==========================================")
+              raise SystemExit(0)
 
           automation_tasks_xml = []
 
@@ -667,7 +995,7 @@ jobs:
 
       - name: Deployment complete
         run: |
-          echo "Production Automation structure verified."
+          echo "Production Automation workflow completed safely."
           echo "No schedule was deployed."
           echo "Automation was not activated."
           echo "Automation was not executed."
