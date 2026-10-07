@@ -428,32 +428,90 @@ jobs:
           automation = definition["automation"]
           tasks = definition["tasks"]
 
-          # If the Automation already exists, perform a READ-ONLY structural
-          # comparison. No Create/Update/Delete/Perform call is made on this path.
-          existing_automation = retrieve(
+          # Retrieve by CustomerKey, but do not treat a blank SFMC Results
+          # wrapper as an existing Automation. Production has been observed to
+          # return one Results node with no usable identity values.
+          automation_lookup_results = retrieve(
               "Automation",
-              ["CustomerKey", "Name", "Status"],
+              ["ObjectID", "CustomerKey", "Name", "Status"],
               "CustomerKey",
               automation["customerKey"],
           )
 
-          if existing_automation:
+          existing_automation = [
+              item for item in automation_lookup_results
+              if (
+                  child_text(item, "ObjectID")
+                  or child_text(item, "CustomerKey")
+                  or child_text(item, "Name")
+              )
+          ]
+
+          blank_automation_results = (
+              len(automation_lookup_results) - len(existing_automation)
+          )
+
+          print(
+              "Automation lookup raw results:",
+              len(automation_lookup_results),
+          )
+          print(
+              "Automation lookup identifiable results:",
+              len(existing_automation),
+          )
+          print(
+              "Automation lookup blank/ghost results ignored:",
+              blank_automation_results,
+          )
+
+          # Independent fail-safe existence check through Program. This route
+          # is read-only. Any identifiable Program blocks CREATE and is handled
+          # by the existing comparison path below.
+          program_existence_results = retrieve(
+              "Program",
+              ["ObjectID", "CustomerKey", "Name", "Status"],
+              "CustomerKey",
+              automation["customerKey"],
+          )
+          identifiable_programs = [
+              item for item in program_existence_results
+              if (
+                  child_text(item, "ObjectID")
+                  or child_text(item, "CustomerKey")
+                  or child_text(item, "Name")
+              )
+          ]
+
+          print(
+              "Program lookup identifiable results:",
+              len(identifiable_programs),
+          )
+
+          if len(existing_automation) > 1:
+              raise RuntimeError(
+                  f"Multiple identifiable Production Automations found for "
+                  f"{automation['customerKey']}; CREATE blocked."
+              )
+
+          if len(identifiable_programs) > 1:
+              raise RuntimeError(
+                  f"Multiple identifiable Production Programs found for "
+                  f"{automation['customerKey']}; CREATE blocked."
+              )
+
+          # If Program resolves an object while Automation returns only a blank
+          # wrapper, still treat the asset as existing and use the read-only
+          # comparison path. Never CREATE over an identifiable Program.
+          asset_exists = bool(existing_automation or identifiable_programs)
+
+          if asset_exists:
               # Automation Retrieve is used only to detect existence.
               # Do not re-filter its returned Results by CustomerKey because
               # SFMC does not reliably populate that property on Automation
               # retrieve responses. Resolve identity through Program instead.
               differences = []
 
-              programs = retrieve(
-                  "Program",
-                  ["ObjectID", "CustomerKey", "Name", "Status"],
-                  "CustomerKey",
-                  automation["customerKey"],
-              )
-              programs = [
-                  item for item in programs
-                  if child_text(item, "CustomerKey") == automation["customerKey"]
-              ]
+              programs = identifiable_programs
 
               if len(programs) != 1:
                   print("")
@@ -915,6 +973,11 @@ jobs:
               )
               print("==========================================")
               raise SystemExit(0)
+
+          print("")
+          print("No identifiable Production Automation or Program found.")
+          print("CREATE path is permitted by existence guard.")
+          print("Target DE and QueryDefinition safety checks still apply.")
 
           automation_tasks_xml = []
 
