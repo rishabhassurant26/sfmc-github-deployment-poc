@@ -569,16 +569,8 @@ jobs:
           PY
 
 
-      # ============================================================
+          # ============================================================
       # 8. PROVE API IDENTITY USING PRESERVED NEWOBJECTID
-      #
-      # TEMPORARY POC ONLY.
-      #
-      # The ObjectID below came from the successful original
-      # SOAP Create response and was preserved in result.json.
-      #
-      # This step does NOT infer any Automation -> Task -> Query
-      # relationship.
       # ============================================================
       - name: Prove Automation identity using preserved NewObjectID
         id: objectid_proof
@@ -586,10 +578,8 @@ jobs:
         env:
           ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
           SOAP_URL: ${{ steps.auth.outputs.soap_url }}
-
           EXPECTED_AUTOMATION_NAME: ${{ inputs.automation_name }}
           EXPECTED_CUSTOMER_KEY: ${{ steps.automation.outputs.customer_key }}
-
           KNOWN_AUTOMATION_OBJECT_ID: "6d9e9be9-77a5-4ea5-931b-dad614ff9769"
           EXPECTED_QUERY_OBJECT_ID: "42c239b1-af53-4d13-80ce-7ae7fd9937ec"
 
@@ -613,28 +603,13 @@ jobs:
 
           token = os.environ["ACCESS_TOKEN"]
           soap_url = os.environ["SOAP_URL"].rstrip("/")
-
-          expected_name = os.environ[
-              "EXPECTED_AUTOMATION_NAME"
-          ]
-
-          expected_customer_key = os.environ[
-              "EXPECTED_CUSTOMER_KEY"
-          ]
-
-          known_object_id = os.environ[
-              "KNOWN_AUTOMATION_OBJECT_ID"
-          ]
-
-          expected_query_object_id = os.environ[
-              "EXPECTED_QUERY_OBJECT_ID"
-          ]
+          expected_name = os.environ["EXPECTED_AUTOMATION_NAME"]
+          expected_customer_key = os.environ["EXPECTED_CUSTOMER_KEY"]
+          known_object_id = os.environ["KNOWN_AUTOMATION_OBJECT_ID"]
+          expected_query_object_id = os.environ["EXPECTED_QUERY_OBJECT_ID"]
 
           def esc(value):
-              return html.escape(
-                  value or "",
-                  quote=True
-              )
+              return html.escape(value or "", quote=True)
 
           body = f"""<?xml version="1.0" encoding="UTF-8"?>
           <soapenv:Envelope
@@ -643,20 +618,14 @@ jobs:
             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
             <soapenv:Header>
-              <fueloauth xmlns="http://exacttarget.com">
-                {esc(token)}
-              </fueloauth>
+              <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
             </soapenv:Header>
 
             <soapenv:Body>
-
               <et:RetrieveRequestMsg>
-
                 <et:RetrieveRequest>
 
-                  <et:ObjectType>
-                    Automation
-                  </et:ObjectType>
+                  <et:ObjectType>Automation</et:ObjectType>
 
                   <et:Properties>ObjectID</et:Properties>
                   <et:Properties>CustomerKey</et:Properties>
@@ -667,27 +636,14 @@ jobs:
                   <et:Properties>CreatedDate</et:Properties>
                   <et:Properties>ModifiedDate</et:Properties>
 
-                  <et:Filter
-                    xsi:type="et:SimpleFilterPart">
-
-                    <et:Property>
-                      ObjectID
-                    </et:Property>
-
-                    <et:SimpleOperator>
-                      equals
-                    </et:SimpleOperator>
-
-                    <et:Value>
-                      {esc(known_object_id)}
-                    </et:Value>
-
+                  <et:Filter xsi:type="et:SimpleFilterPart">
+                    <et:Property>ObjectID</et:Property>
+                    <et:SimpleOperator>equals</et:SimpleOperator>
+                    <et:Value>{esc(known_object_id)}</et:Value>
                   </et:Filter>
 
                 </et:RetrieveRequest>
-
               </et:RetrieveRequestMsg>
-
             </soapenv:Body>
 
           </soapenv:Envelope>
@@ -697,24 +653,17 @@ jobs:
               soap_url + "/Service.asmx",
               data=body.encode("utf-8"),
               headers={
-                  "Content-Type":
-                      "text/xml; charset=UTF-8",
-                  "SOAPAction":
-                      "Retrieve"
+                  "Content-Type": "text/xml; charset=UTF-8",
+                  "SOAPAction": "Retrieve"
               },
               method="POST"
           )
 
           try:
-
-              with urllib.request.urlopen(
-                  request
-              ) as response:
-
+              with urllib.request.urlopen(request) as response:
                   xml_data = response.read()
 
           except urllib.error.HTTPError as exc:
-
               response_text = exc.read().decode(
                   "utf-8",
                   errors="replace"
@@ -723,15 +672,13 @@ jobs:
               print(response_text)
 
               raise SystemExit(
-                  f"Automation ObjectID Retrieve HTTP "
-                  f"{exc.code}"
+                  f"Automation ObjectID Retrieve HTTP {exc.code}"
               )
 
           with open(
               "automation-objectid-response.xml",
               "wb"
           ) as f:
-
               f.write(xml_data)
 
           root = ET.fromstring(xml_data)
@@ -741,28 +688,17 @@ jobs:
 
           for element in root.iter():
 
-              local = (
-                  element.tag
-                  .split("}")[-1]
-              )
+              local = element.tag.split("}")[-1]
 
               if local == "OverallStatus":
-
-                  overall = (
-                      element.text or ""
-                  ).strip()
+                  overall = (element.text or "").strip()
 
               elif local == "Results":
 
                   current = {}
 
                   for child in list(element):
-
-                      key = (
-                          child.tag
-                          .split("}")[-1]
-                      )
-
+                      key = child.tag.split("}")[-1]
                       current[key] = (
                           child.text or ""
                       ).strip()
@@ -772,10 +708,7 @@ jobs:
                       or current.get("CustomerKey")
                       or current.get("ObjectID")
                   ):
-
-                      results.append(
-                          current
-                      )
+                      results.append(current)
 
           print("")
           print("============================================")
@@ -788,14 +721,12 @@ jobs:
               "OK",
               "MoreDataAvailable"
           ):
-
               raise SystemExit(
                   "Automation ObjectID Retrieve returned: "
                   + overall
               )
 
           if len(results) != 1:
-
               raise SystemExit(
                   "Expected exactly one Automation for "
                   "the preserved NewObjectID; SFMC "
@@ -804,70 +735,45 @@ jobs:
 
           automation = results[0]
 
-          returned_name = (
-              automation.get(
-                  "Name",
-                  ""
-              )
+          returned_name = automation.get("Name", "")
+          returned_customer_key = automation.get(
+              "CustomerKey",
+              ""
+          )
+          returned_object_id = automation.get(
+              "ObjectID",
+              ""
           )
 
-          returned_customer_key = (
-              automation.get(
-                  "CustomerKey",
-                  ""
-              )
-          )
-
-          returned_object_id = (
-              automation.get(
-                  "ObjectID",
-                  ""
-              )
-          )
-
-          print(
-              "Returned Name:",
-              returned_name
-          )
-
+          print("Returned Name:", returned_name)
           print(
               "Returned CustomerKey:",
               returned_customer_key
           )
-
           print(
               "Returned ObjectID:",
-              returned_object_id
-              or "[not returned]"
+              returned_object_id or "[not returned]"
           )
 
           if returned_name != expected_name:
-
               raise SystemExit(
                   "ObjectID resolved to a different "
                   "Automation name."
               )
 
-          if (
-              returned_customer_key
-              != expected_customer_key
-          ):
-
+          if returned_customer_key != expected_customer_key:
               raise SystemExit(
                   "ObjectID resolved to a different "
                   "Automation CustomerKey."
               )
 
           proof = {
-
-              "status":
-                  "IDENTITY_PROVEN",
+              "status": "IDENTITY_PROVEN",
 
               "requestedObjectId":
                   known_object_id,
 
               "expectedAutomation": {
-
                   "name":
                       expected_name,
 
@@ -879,7 +785,6 @@ jobs:
                   automation,
 
               "expectedQueryEvidence": {
-
                   "objectId":
                       expected_query_object_id,
 
@@ -903,7 +808,6 @@ jobs:
               "w",
               encoding="utf-8"
           ) as f:
-
               json.dump(
                   proof,
                   f,
@@ -915,11 +819,7 @@ jobs:
               os.environ["GITHUB_OUTPUT"],
               "a"
           ) as f:
-
-              f.write(
-                  "identity_proven=true\n"
-              )
-
+              f.write("identity_proven=true\n")
               f.write(
                   "known_object_id="
                   + known_object_id
@@ -927,27 +827,19 @@ jobs:
               )
 
           print("")
-          print(
-              "RESULT: AUTOMATION API IDENTITY PROVEN"
-          )
-
+          print("RESULT: AUTOMATION API IDENTITY PROVEN")
           print(
               "ObjectID -> Name -> CustomerKey "
               "cross-check passed."
           )
-
           print(
               "No Automation-to-Task or "
               "Automation-to-Query relationship "
               "has been guessed."
           )
-
-          print(
-              "============================================"
-          )
+          print("============================================")
 
           PY
-
 
       # ============================================================
       # 9. ISOLATED AUTOMATIONTASK DISCOVERY
