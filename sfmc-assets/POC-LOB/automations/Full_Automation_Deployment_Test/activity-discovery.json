@@ -1,0 +1,43 @@
+{
+  "status": "ACTIVITIES_RESOLVED",
+  "tasksChecked": 1,
+  "taskObjectIds": [
+    "1f51adf5-d916-4d88-861c-0d95ed406db4"
+  ],
+  "soapResults": [
+    {
+      "taskObjectId": "1f51adf5-d916-4d88-861c-0d95ed406db4",
+      "soapStatus": "OK",
+      "requestId": "0f837dda-c7cd-4811-baff-7e11441d9235",
+      "activitiesReturned": 1
+    }
+  ],
+  "activitiesReturned": 1,
+  "activities": [
+    {
+      "PartnerKey": "",
+      "ObjectID": "17e97880-dee2-4ee6-b3f7-37fecb6cd338",
+      "CustomerKey": "5a8fea10-39f6-42bd-bff8-d84b28fa9b0d",
+      "Name": "Active Customer Query New",
+      "Description": "",
+      "IsActive": "true",
+      "Definition": {
+        "PartnerKey": "",
+        "ObjectID": "1107d907-639f-4e09-a5c4-54670291676e"
+      },
+      "Program": {
+        "PartnerKey": "",
+        "ObjectID": "274178d2-a239-4e3e-910a-94a4f0998ee3"
+      },
+      "Task": {
+        "PartnerKey": "",
+        "ObjectID": "1f51adf5-d916-4d88-861c-0d95ed406db4"
+      },
+      "Sequence": "0",
+      "_sourceTaskObjectId": "1f51adf5-d916-4d88-861c-0d95ed406db4"
+    }
+  ],
+  "rawResponseFiles": [
+    "activity-retrieve-response-1.xml"
+  ]
+}

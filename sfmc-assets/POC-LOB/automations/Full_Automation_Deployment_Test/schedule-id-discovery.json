@@ -1,0 +1,16 @@
+{
+  "status": "SCHEDULE_ID_RESOLVED",
+  "soapStatus": "OK",
+  "requestId": "40b51d35-ccfa-434e-873e-dddfd63f7df3",
+  "requestedProgramObjectId": "274178d2-a239-4e3e-910a-94a4f0998ee3",
+  "programsReturned": 1,
+  "program": {
+    "ObjectID": "274178d2-a239-4e3e-910a-94a4f0998ee3",
+    "CustomerKey": "5fa70271-3cf6-56ed-ee99-22f3fdfb5394",
+    "Name": "Full Automation Deployment Test",
+    "Schedule": {
+      "ID": "0"
+    }
+  },
+  "scheduleId": "0"
+}

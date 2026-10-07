@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "2.0",
+  "assetType": "automation",
+  "environment": "sandbox",
+  "businessUnitMid": "524002130",
+  "lineOfBusiness": "POC-LOB",
+  "automation": {
+    "name": "Full Automation Deployment Test",
+    "customerKey": "5fa70271-3cf6-56ed-ee99-22f3fdfb5394",
+    "description": "",
+    "automationType": "scheduled",
+    "source": {
+      "automationSourceId": "",
+      "automationSourceType": ""
+    }
+  },
+  "program": {
+    "sourceObjectId": "274178d2-a239-4e3e-910a-94a4f0998ee3"
+  },
+  "tasks": [
+    {
+      "sequence": 0,
+      "name": "",
+      "description": "",
+      "activities": [
+        {
+          "sequence": 0,
+          "name": "Active Customer Query New",
+          "customerKey": "5a8fea10-39f6-42bd-bff8-d84b28fa9b0d",
+          "activityTypeId": "",
+          "definition": {
+            "type": "QueryDefinition",
+            "name": "Active Customer Query New",
+            "customerKey": "Active_Customer_Query_New",
+            "description": "SQL Query Activity for GitHub CICD Automation deployment test",
+            "queryText": "SELECT\n    CustomerID,\n    FirstName,\n    Email,\n    [Status]\nFROM [Source_DE_Automation_Test]\nWHERE [Status] = 'Active'",
+            "targetType": "DE",
+            "targetDataExtension": {
+              "name": "Target_DE_Automation_Test",
+              "customerKey": "Target_DE_Automation_Test",
+              "description": "Selective GitHub CI CD Deployment Test2x"
+            },
+            "targetUpdateType": "Overwrite"
+          }
+        }
+      ]
+    }
+  ],
+  "schedule": {
+    "deploymentMode": "manual",
+    "activateAfterDeployment": false,
+    "reason": "Automation structure is version-controlled and deployed by CI/CD; Production schedule/activation is configured manually after deployment."
+  },
+  "deploymentPolicy": {
+    "deployStructure": true,
+    "deploySchedule": false,
+    "activateAutomation": false,
+    "runAutomation": false
+  },
+  "dataExtensionDependencies": [
+    {
+      "customerKey": "Source_DE_Automation_Test",
+      "name": "Source_DE_Automation_Test",
+      "roles": [
+        "source"
+      ],
+      "queryDefinitions": [
+        "Active_Customer_Query_New"
+      ],
+      "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/Source_DE_Automation_Test/definition.json"
+    },
+    {
+      "customerKey": "Target_DE_Automation_Test",
+      "name": "Target_DE_Automation_Test",
+      "roles": [
+        "target"
+      ],
+      "queryDefinitions": [
+        "Active_Customer_Query_New"
+      ],
+      "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/Target_DE_Automation_Test/definition.json"
+    }
+  ]
+}

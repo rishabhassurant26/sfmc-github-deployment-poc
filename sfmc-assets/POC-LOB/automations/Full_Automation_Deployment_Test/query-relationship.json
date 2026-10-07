@@ -1,0 +1,41 @@
+{
+  "status": "QUERY_RELATIONSHIPS_RESOLVED",
+  "activitiesChecked": 1,
+  "queryDefinitionsAvailable": 22,
+  "relationshipsResolved": 1,
+  "relationships": [
+    {
+      "activity": {
+        "objectId": "17e97880-dee2-4ee6-b3f7-37fecb6cd338",
+        "name": "Active Customer Query New",
+        "customerKey": "5a8fea10-39f6-42bd-bff8-d84b28fa9b0d",
+        "sequence": "0",
+        "taskObjectId": "1f51adf5-d916-4d88-861c-0d95ed406db4",
+        "definitionObjectId": "1107d907-639f-4e09-a5c4-54670291676e"
+      },
+      "queryDefinition": {
+        "objectId": "1107d907-639f-4e09-a5c4-54670291676e",
+        "customerKey": "Active_Customer_Query_New",
+        "name": "Active Customer Query New",
+        "description": "SQL Query Activity for GitHub CICD Automation deployment test",
+        "queryText": "SELECT\n    CustomerID,\n    FirstName,\n    Email,\n    [Status]\nFROM [Source_DE_Automation_Test]\nWHERE [Status] = 'Active'",
+        "targetType": "DE",
+        "targetDataExtension": {
+          "name": "Target_DE_Automation_Test",
+          "customerKey": "Target_DE_Automation_Test",
+          "description": "Selective GitHub CI CD Deployment Test2x"
+        },
+        "targetUpdateType": "Overwrite",
+        "categoryId": "",
+        "status": ""
+      },
+      "proof": {
+        "matchType": "EXACT_OBJECT_ID",
+        "activityDefinitionObjectId": "1107d907-639f-4e09-a5c4-54670291676e",
+        "queryDefinitionObjectId": "1107d907-639f-4e09-a5c4-54670291676e"
+      }
+    }
+  ],
+  "unresolvedActivities": [],
+  "duplicateQueryObjectIds": []
+}

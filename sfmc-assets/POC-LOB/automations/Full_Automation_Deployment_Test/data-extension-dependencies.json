@@ -1,0 +1,24 @@
+[
+  {
+    "customerKey": "Source_DE_Automation_Test",
+    "name": "Source_DE_Automation_Test",
+    "roles": [
+      "source"
+    ],
+    "queryDefinitions": [
+      "Active_Customer_Query_New"
+    ],
+    "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/Source_DE_Automation_Test/definition.json"
+  },
+  {
+    "customerKey": "Target_DE_Automation_Test",
+    "name": "Target_DE_Automation_Test",
+    "roles": [
+      "target"
+    ],
+    "queryDefinitions": [
+      "Active_Customer_Query_New"
+    ],
+    "repositoryDefinition": "sfmc-assets/POC-LOB/data-extensions/Target_DE_Automation_Test/definition.json"
+  }
+]
