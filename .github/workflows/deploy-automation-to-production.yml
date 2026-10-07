@@ -456,9 +456,165 @@ jobs:
               ]
 
               if len(programs) != 1:
+                  print("")
+                  print("==========================================")
+                  print("PRODUCTION AUTOMATION READ-ONLY DISCOVERY")
+                  print("==========================================")
+                  print("Automation CustomerKey:", automation["customerKey"])
+                  print("Program results by CustomerKey:", len(programs))
+                  print("")
+                  print("Program relationship was not resolved.")
+                  print("Running read-only Describe/Retrieve diagnostics only.")
+                  print("No Create/Update/Delete/Perform operation will be called.")
+
+                  # Describe Automation so the log shows exactly which
+                  # properties this Production BU exposes as retrievable.
+                  describe_body = f"""
+              <DefinitionRequestMsg xmlns="{API}">
+                <DescribeRequests>
+                  <ObjectDefinitionRequest>
+                    <ObjectType>Automation</ObjectType>
+                  </ObjectDefinitionRequest>
+                </DescribeRequests>
+              </DefinitionRequestMsg>
+              """
+                  describe_root = soap_call("Describe", describe_body)
+
+                  retrievable = []
+                  for prop in describe_root.iter():
+                      if lname(prop) != "Properties":
+                          continue
+                      name = child_text(prop, "Name")
+                      is_retrievable = child_text(prop, "IsRetrievable")
+                      if name and is_retrievable.lower() == "true":
+                          retrievable.append(name)
+
+                  print("")
+                  print("Automation retrievable properties:")
+                  for name in retrievable:
+                      print("-", name)
+
+                  # Retrieve only properties that Describe says are
+                  # retrievable. CustomerKey is already known to be usable as
+                  # the filter because the existence lookup succeeded.
+                  preferred = [
+                      "ObjectID",
+                      "CustomerKey",
+                      "Name",
+                      "Description",
+                      "Status",
+                      "AutomationType",
+                      "Schedule.ID",
+                      "AutomationSource.AutomationSourceID",
+                      "AutomationSource.AutomationSourceType",
+                  ]
+                  diagnostic_properties = [
+                      name for name in preferred if name in retrievable
+                  ]
+
+                  # Keep the diagnostic useful even if Describe returns an
+                  # unexpectedly small list.
+                  if "Name" not in diagnostic_properties:
+                      diagnostic_properties.append("Name")
+                  if "CustomerKey" not in diagnostic_properties:
+                      diagnostic_properties.append("CustomerKey")
+
+                  diagnostic_results = retrieve(
+                      "Automation",
+                      diagnostic_properties,
+                      "CustomerKey",
+                      automation["customerKey"],
+                  )
+
+                  print("")
+                  print(
+                      "Automation results by CustomerKey:",
+                      len(diagnostic_results),
+                  )
+
+                  for index, result in enumerate(
+                      diagnostic_results, start=1
+                  ):
+                      print("")
+                      print(f"Automation result #{index}")
+                      for property_name in diagnostic_properties:
+                          if "." in property_name:
+                              # Nested values are printed by walking the
+                              # returned XML path by local element names.
+                              parts = property_name.split(".")
+                              nodes = [result]
+                              for part in parts:
+                                  next_nodes = []
+                                  for node in nodes:
+                                      next_nodes.extend(
+                                          child for child in list(node)
+                                          if lname(child) == part
+                                      )
+                                  nodes = next_nodes
+                              value = (
+                                  (nodes[0].text or "").strip()
+                                  if nodes else ""
+                              )
+                          else:
+                              value = child_text(
+                                  result, property_name
+                              )
+                          print(f"{property_name}: {value!r}")
+
+                  # Also probe the preserved source Program ObjectID, if one
+                  # exists in the approved definition. This is read-only and
+                  # does not assume that Sandbox and Production IDs are equal;
+                  # it only records whether Production resolves that ID.
+                  source_program_id = (
+                      (definition.get("program") or {})
+                      .get("sourceObjectId", "")
+                  )
+                  if source_program_id:
+                      program_by_object_id = retrieve(
+                          "Program",
+                          [
+                              "ObjectID",
+                              "CustomerKey",
+                              "Name",
+                              "Status",
+                          ],
+                          "ObjectID",
+                          source_program_id,
+                      )
+                      print("")
+                      print(
+                          "Program results by source ObjectID:",
+                          len(program_by_object_id),
+                      )
+                      for index, result in enumerate(
+                          program_by_object_id, start=1
+                      ):
+                          print(f"Program result #{index}")
+                          print(
+                              "ObjectID:",
+                              repr(child_text(result, "ObjectID")),
+                          )
+                          print(
+                              "CustomerKey:",
+                              repr(child_text(result, "CustomerKey")),
+                          )
+                          print(
+                              "Name:",
+                              repr(child_text(result, "Name")),
+                          )
+
+                  print("")
+                  print("RESULT: RELATIONSHIP UNRESOLVED")
+                  print("Create/Update/Delete performed: NO")
+                  print("Schedule changed: NO")
+                  print("Activated: NO")
+                  print("Executed: NO")
+                  print("==========================================")
+
                   raise RuntimeError(
-                      f"Expected exactly one Production Program for "
-                      f"{automation['customerKey']}; got {len(programs)}."
+                      "Production Program relationship is unresolved. "
+                      "Read-only discovery completed; inspect this step's "
+                      "diagnostic output. No Production changes were made."
                   )
 
               production_program_name = child_text(programs[0], "Name")
