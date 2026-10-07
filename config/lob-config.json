@@ -22,6 +22,10 @@
     "automations": {
       "enabled": true,
       "directory": "automations"
+    },
+    "journeys": {
+      "enabled": true,
+      "directory": "journeys"
     }
   }
 }

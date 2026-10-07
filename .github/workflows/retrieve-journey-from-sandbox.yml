@@ -1,0 +1,929 @@
+name: Retrieve SFMC Journey from Sandbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      journey_name:
+        description: "Exact existing Journey Builder journey name"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  retrieve-journey:
+    name: Retrieve Existing Sandbox Journey
+    runs-on: ubuntu-latest
+
+    steps:
+      # ============================================================
+      # 1. CHECKOUT SANDBOX
+      # ============================================================
+      - name: Checkout sandbox branch
+        uses: actions/checkout@v4
+        with:
+          ref: sandbox
+          fetch-depth: 0
+
+      # ============================================================
+      # 2. VALIDATE CONFIG
+      # ============================================================
+      - name: Validate configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONFIG_FILE="config/lob-config.json"
+
+          [ -f "$CONFIG_FILE" ] || {
+            echo "ERROR: $CONFIG_FILE not found."
+            exit 1
+          }
+
+          LOB=$(jq -r '.lineOfBusiness // empty' "$CONFIG_FILE")
+          ASSET_ROOT=$(jq -r '.assetRoot // empty' "$CONFIG_FILE")
+          SANDBOX_MID=$(jq -r '.environments.sandbox.businessUnitMid // empty' "$CONFIG_FILE")
+          JOURNEYS_ENABLED=$(jq -r '.assetTypes.journeys.enabled // false' "$CONFIG_FILE")
+          JOURNEYS_DIR=$(jq -r '.assetTypes.journeys.directory // empty' "$CONFIG_FILE")
+
+          [ -n "$LOB" ] || {
+            echo "ERROR: lineOfBusiness missing."
+            exit 1
+          }
+
+          [ -n "$ASSET_ROOT" ] || {
+            echo "ERROR: assetRoot missing."
+            exit 1
+          }
+
+          [ -n "$SANDBOX_MID" ] || {
+            echo "ERROR: Sandbox MID missing."
+            exit 1
+          }
+
+          [ "$JOURNEYS_ENABLED" = "true" ] || {
+            echo "ERROR: Journey retrieval disabled in config."
+            exit 1
+          }
+
+          [ -n "$JOURNEYS_DIR" ] || {
+            echo "ERROR: Journey directory missing."
+            exit 1
+          }
+
+          echo "lob=$LOB" >> "$GITHUB_OUTPUT"
+          echo "asset_root=$ASSET_ROOT" >> "$GITHUB_OUTPUT"
+          echo "sandbox_mid=$SANDBOX_MID" >> "$GITHUB_OUTPUT"
+          echo "journeys_dir=$JOURNEYS_DIR" >> "$GITHUB_OUTPUT"
+
+          echo "Configuration validated."
+
+      # ============================================================
+      # 3. VALIDATE INPUT
+      # ============================================================
+      - name: Validate input
+        shell: bash
+        env:
+          JOURNEY_NAME: ${{ inputs.journey_name }}
+        run: |
+          set -euo pipefail
+
+          [ -n "$JOURNEY_NAME" ] || {
+            echo "ERROR: Journey name is required."
+            exit 1
+          }
+
+          echo "Journey requested:"
+          echo "$JOURNEY_NAME"
+
+      # ============================================================
+      # 4. VALIDATE SECRETS
+      # ============================================================
+      - name: Validate GitHub secrets
+        shell: bash
+        env:
+          AUTH_BASE_URI: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          CLIENT_ID: ${{ secrets.SFMC_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          [ -n "$AUTH_BASE_URI" ] || {
+            echo "ERROR: SFMC_AUTH_BASE_URI missing."
+            exit 1
+          }
+
+          [ -n "$CLIENT_ID" ] || {
+            echo "ERROR: SFMC_CLIENT_ID missing."
+            exit 1
+          }
+
+          [ -n "$CLIENT_SECRET" ] || {
+            echo "ERROR: SFMC_CLIENT_SECRET missing."
+            exit 1
+          }
+
+          echo "Required secrets are available."
+
+      # ============================================================
+      # 5. AUTHENTICATE
+      # ============================================================
+      - name: Authenticate to SFMC Sandbox
+        id: auth
+        shell: bash
+        env:
+          AUTH_BASE_URI: ${{ secrets.SFMC_AUTH_BASE_URI }}
+          CLIENT_ID: ${{ secrets.SFMC_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.SFMC_CLIENT_SECRET }}
+          SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
+        run: |
+          set -euo pipefail
+
+          TOKEN_RESPONSE=$(curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --request POST \
+            "${AUTH_BASE_URI%/}/v2/token" \
+            --header "Content-Type: application/json" \
+            --data "{
+              \"grant_type\":\"client_credentials\",
+              \"client_id\":\"${CLIENT_ID}\",
+              \"client_secret\":\"${CLIENT_SECRET}\",
+              \"account_id\":\"${SANDBOX_MID}\"
+            }")
+
+          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty')
+          REST_URL=$(echo "$TOKEN_RESPONSE" | jq -r '.rest_instance_url // empty')
+          SOAP_URL=$(echo "$TOKEN_RESPONSE" | jq -r '.soap_instance_url // empty')
+
+          [ -n "$ACCESS_TOKEN" ] || {
+            echo "ERROR: Access token not returned."
+            exit 1
+          }
+
+          [ -n "$REST_URL" ] || {
+            echo "ERROR: REST URL not returned."
+            exit 1
+          }
+
+          [ -n "$SOAP_URL" ] || {
+            echo "ERROR: SOAP URL not returned."
+            exit 1
+          }
+
+          echo "::add-mask::$ACCESS_TOKEN"
+
+          echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
+          echo "rest_url=$REST_URL" >> "$GITHUB_OUTPUT"
+          echo "soap_url=$SOAP_URL" >> "$GITHUB_OUTPUT"
+
+          echo "SFMC Sandbox authentication successful."
+
+      # ============================================================
+      # 6. RETRIEVE EXACT JOURNEY
+      # ============================================================
+      - name: Retrieve Journey definition
+        id: journey
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          REST_URL: ${{ steps.auth.outputs.rest_url }}
+          JOURNEY_NAME: ${{ inputs.journey_name }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+          import urllib.error
+
+          token = os.environ["ACCESS_TOKEN"]
+          rest_url = os.environ["REST_URL"].rstrip("/")
+          journey_name = os.environ["JOURNEY_NAME"]
+
+          def get_json(url):
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/json"
+                  },
+                  method="GET"
+              )
+
+              try:
+                  with urllib.request.urlopen(req) as response:
+                      return json.loads(response.read().decode("utf-8"))
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(
+                      f"Journey Builder REST request failed "
+                      f"HTTP {exc.code}: {body}"
+                  )
+
+          query = urllib.parse.urlencode({
+              "$page": 1,
+              "$pageSize": 50,
+              "nameOrDescription": journey_name,
+              "mostRecentVersionOnly": "true"
+          })
+
+          collection = get_json(
+              f"{rest_url}/interaction/v1/interactions?{query}"
+          )
+
+          items = collection.get("items") or []
+
+          exact = [
+              item for item in items
+              if (item.get("name") or "").strip() == journey_name.strip()
+          ]
+
+          if len(exact) == 0:
+              raise RuntimeError(
+                  f"Exact Journey not found in Sandbox: {journey_name}"
+              )
+
+          if len(exact) > 1:
+              exact.sort(
+                  key=lambda x: int(
+                      x.get("version")
+                      or x.get("versionNumber")
+                      or 0
+                  ),
+                  reverse=True
+              )
+
+          selected = exact[0]
+
+          journey_id = selected.get("id")
+
+          if not journey_id:
+              raise RuntimeError(
+                  "Journey search result did not return Journey id."
+              )
+
+          # Retrieve the actual Journey Specification by its exact ID.
+          journey = get_json(
+              f"{rest_url}/interaction/v1/interactions/"
+              f"{urllib.parse.quote(str(journey_id), safe='')}"
+          )
+
+          if (journey.get("name") or "").strip() != journey_name.strip():
+              raise RuntimeError(
+                  "Retrieved Journey name does not match requested Journey."
+              )
+
+          triggers = journey.get("triggers") or []
+          activities = journey.get("activities") or []
+
+          if len(triggers) != 1:
+              raise RuntimeError(
+                  f"Expected exactly one Journey trigger; found {len(triggers)}."
+              )
+
+          trigger = triggers[0]
+          event_key = trigger.get("eventDefinitionKey")
+
+          if not event_key:
+              raise RuntimeError(
+                  "Journey trigger does not contain eventDefinitionKey."
+              )
+
+          with open("/tmp/journey.json", "w", encoding="utf-8") as f:
+              json.dump(journey, f, indent=2, ensure_ascii=False)
+
+          with open("/tmp/event-definition-key.txt", "w", encoding="utf-8") as f:
+              f.write(str(event_key))
+
+          print("Journey retrieved successfully.")
+          print(f"Name: {journey.get('name')}")
+          print(f"Key: {journey.get('key')}")
+          print(f"ID: {journey.get('id')}")
+          print(
+              "Version:",
+              journey.get("version")
+              or journey.get("versionNumber")
+          )
+          print(f"Status: {journey.get('status')}")
+          print(f"Activities: {len(activities)}")
+          print(f"Event Definition Key: {event_key}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"journey_id={journey_id}\n")
+              f.write(f"event_definition_key={event_key}\n")
+          PY
+
+      # ============================================================
+      # 7. RETRIEVE EXACT ENTRY EVENT DEFINITION
+      # ============================================================
+      - name: Retrieve Journey entry Event Definition
+        id: event
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          REST_URL: ${{ steps.auth.outputs.rest_url }}
+          EVENT_DEFINITION_KEY: ${{ steps.journey.outputs.event_definition_key }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+          import urllib.error
+
+          token = os.environ["ACCESS_TOKEN"]
+          rest_url = os.environ["REST_URL"].rstrip("/")
+          event_key = os.environ["EVENT_DEFINITION_KEY"]
+
+          url = (
+              f"{rest_url}/interaction/v1/eventDefinitions/key:"
+              f"{urllib.parse.quote(event_key, safe='')}"
+          )
+
+          req = urllib.request.Request(
+              url,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/json"
+              },
+              method="GET"
+          )
+
+          try:
+              with urllib.request.urlopen(req) as response:
+                  event = json.loads(
+                      response.read().decode("utf-8")
+                  )
+          except urllib.error.HTTPError as exc:
+              body = exc.read().decode("utf-8", errors="replace")
+              raise RuntimeError(
+                  f"Event Definition retrieval failed "
+                  f"HTTP {exc.code}: {body}"
+              )
+
+          actual_key = event.get("eventDefinitionKey")
+
+          if actual_key != event_key:
+              raise RuntimeError(
+                  "Retrieved Event Definition key does not match Journey trigger."
+              )
+
+          de_object_id = event.get("dataExtensionId")
+
+          if not de_object_id:
+              raise RuntimeError(
+                  "Event Definition did not return dataExtensionId."
+              )
+
+          with open("/tmp/event-definition.json", "w", encoding="utf-8") as f:
+              json.dump(event, f, indent=2, ensure_ascii=False)
+
+          print("Entry Event Definition retrieved successfully.")
+          print(f"Event Definition Key: {actual_key}")
+          print(f"Entry DE ObjectID: {de_object_id}")
+          print(f"Entry DE Name: {event.get('dataExtensionName')}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"de_object_id={de_object_id}\n")
+          PY
+
+      # ============================================================
+      # 8. RETRIEVE ENTRY DATA EXTENSION + SCHEMA
+      # ============================================================
+      - name: Retrieve Journey Entry Data Extension dependency
+        id: entry_de
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+          ENTRY_DE_OBJECT_ID: ${{ steps.event.outputs.de_object_id }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import html
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+          de_object_id = os.environ["ENTRY_DE_OBJECT_ID"]
+
+          SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
+          ET_NS = "http://exacttarget.com/wsdl/partnerAPI"
+
+          def esc(value):
+              return html.escape(str(value or ""), quote=True)
+
+          def local_name(tag):
+              return tag.split("}", 1)[-1]
+
+          def child_text(node, name):
+              if node is None:
+                  return ""
+              for child in list(node):
+                  if local_name(child.tag) == name:
+                      return (child.text or "").strip()
+              return ""
+
+          def nested_text(node, parent_name, child_name):
+              if node is None:
+                  return ""
+              for child in list(node):
+                  if local_name(child.tag) == parent_name:
+                      return child_text(child, child_name)
+              return ""
+
+          def soap_retrieve(object_type, properties, filter_property, filter_value):
+              props = "\n".join(
+                  f"<et:Properties>{esc(p)}</et:Properties>"
+                  for p in properties
+              )
+
+              body = f"""<?xml version="1.0" encoding="UTF-8"?>
+              <soapenv:Envelope
+                xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                xmlns:et="http://exacttarget.com/wsdl/partnerAPI"
+                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+                <soapenv:Header>
+                  <fueloauth xmlns="http://exacttarget.com">{esc(token)}</fueloauth>
+                </soapenv:Header>
+                <soapenv:Body>
+                  <et:RetrieveRequestMsg>
+                    <et:RetrieveRequest>
+                      <et:ObjectType>{esc(object_type)}</et:ObjectType>
+                      {props}
+                      <et:Filter xsi:type="et:SimpleFilterPart">
+                        <et:Property>{esc(filter_property)}</et:Property>
+                        <et:SimpleOperator>equals</et:SimpleOperator>
+                        <et:Value>{esc(filter_value)}</et:Value>
+                      </et:Filter>
+                    </et:RetrieveRequest>
+                  </et:RetrieveRequestMsg>
+                </soapenv:Body>
+              </soapenv:Envelope>"""
+
+              request = urllib.request.Request(
+                  soap_url + "/Service.asmx",
+                  data=body.encode("utf-8"),
+                  headers={
+                      "Content-Type": "text/xml; charset=UTF-8",
+                      "SOAPAction": "Retrieve"
+                  },
+                  method="POST"
+              )
+
+              try:
+                  with urllib.request.urlopen(request) as response:
+                      xml_bytes = response.read()
+              except urllib.error.HTTPError as exc:
+                  error_body = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(
+                      f"{object_type} SOAP retrieve failed "
+                      f"HTTP {exc.code}: {error_body}"
+                  )
+
+              root = ET.fromstring(xml_bytes)
+
+              status = ""
+              status_message = ""
+
+              for elem in root.iter():
+                  ln = local_name(elem.tag)
+                  if ln == "OverallStatus":
+                      status = (elem.text or "").strip()
+                  elif ln == "StatusMessage":
+                      status_message = (elem.text or "").strip()
+
+              if status and status not in ("OK", "MoreDataAvailable"):
+                  raise RuntimeError(
+                      f"{object_type} retrieve failed: "
+                      f"{status}: {status_message}"
+                  )
+
+              results = [
+                  elem for elem in root.iter()
+                  if local_name(elem.tag) == "Results"
+              ]
+
+              return results
+
+          # --------------------------------------------------------
+          # Retrieve exact DE by ObjectID supplied by Event Definition
+          # --------------------------------------------------------
+          de_results = soap_retrieve(
+              "DataExtension",
+              [
+                  "ObjectID",
+                  "CustomerKey",
+                  "Name",
+                  "Description",
+                  "IsSendable",
+                  "IsTestable",
+                  "SendableDataExtensionField.Name",
+                  "SendableSubscriberField.Name"
+              ],
+              "ObjectID",
+              de_object_id
+          )
+
+          if len(de_results) != 1:
+              raise RuntimeError(
+                  f"Expected exactly one Entry DE for ObjectID "
+                  f"{de_object_id}; found {len(de_results)}."
+              )
+
+          de_node = de_results[0]
+
+          de = {
+              "objectId": child_text(de_node, "ObjectID"),
+              "customerKey": child_text(de_node, "CustomerKey"),
+              "name": child_text(de_node, "Name"),
+              "description": child_text(de_node, "Description"),
+              "isSendable": child_text(de_node, "IsSendable").lower() == "true",
+              "isTestable": child_text(de_node, "IsTestable").lower() == "true",
+              "sendableDataExtensionField": nested_text(
+                  de_node,
+                  "SendableDataExtensionField",
+                  "Name"
+              ),
+              "sendableSubscriberField": nested_text(
+                  de_node,
+                  "SendableSubscriberField",
+                  "Name"
+              )
+          }
+
+          if de["objectId"] != de_object_id:
+              raise RuntimeError(
+                  "SOAP Entry DE ObjectID does not match Event Definition."
+              )
+
+          if not de["customerKey"]:
+              raise RuntimeError(
+                  "Entry DE CustomerKey was not returned."
+              )
+
+          # --------------------------------------------------------
+          # Retrieve schema using exact tenant-proven property set.
+          # Precision intentionally excluded.
+          # --------------------------------------------------------
+          field_results = soap_retrieve(
+              "DataExtensionField",
+              [
+                  "ObjectID",
+                  "CustomerKey",
+                  "Name",
+                  "FieldType",
+                  "MaxLength",
+                  "IsPrimaryKey",
+                  "IsRequired",
+                  "DefaultValue",
+                  "Ordinal",
+                  "Scale"
+              ],
+              "DataExtension.CustomerKey",
+              de["customerKey"]
+          )
+
+          fields = []
+
+          for node in field_results:
+              def as_bool(value):
+                  return str(value).lower() == "true"
+
+              def as_int_or_none(value):
+                  value = (value or "").strip()
+                  if value == "":
+                      return None
+                  try:
+                      return int(value)
+                  except ValueError:
+                      return None
+
+              fields.append({
+                  "objectId": child_text(node, "ObjectID"),
+                  "customerKey": child_text(node, "CustomerKey"),
+                  "name": child_text(node, "Name"),
+                  "fieldType": child_text(node, "FieldType"),
+                  "maxLength": as_int_or_none(
+                      child_text(node, "MaxLength")
+                  ),
+                  "isPrimaryKey": as_bool(
+                      child_text(node, "IsPrimaryKey")
+                  ),
+                  "isRequired": as_bool(
+                      child_text(node, "IsRequired")
+                  ),
+                  "defaultValue": child_text(node, "DefaultValue"),
+                  "ordinal": as_int_or_none(
+                      child_text(node, "Ordinal")
+                  ),
+                  "scale": as_int_or_none(
+                      child_text(node, "Scale")
+                  )
+              })
+
+          if not fields:
+              raise RuntimeError(
+                  "No fields returned for Journey Entry DE."
+              )
+
+          fields.sort(
+              key=lambda x: (
+                  x["ordinal"] is None,
+                  x["ordinal"] if x["ordinal"] is not None else 999999,
+                  x["name"]
+              )
+          )
+
+          de["fields"] = fields
+
+          with open("/tmp/entry-data-extension.json", "w", encoding="utf-8") as f:
+              json.dump(de, f, indent=2, ensure_ascii=False)
+
+          print("Journey Entry DE dependency retrieved successfully.")
+          print(f"Name: {de['name']}")
+          print(f"CustomerKey: {de['customerKey']}")
+          print(f"ObjectID: {de['objectId']}")
+          print(f"Sendable: {de['isSendable']}")
+          print(
+              "Send Relationship:",
+              f"{de['sendableDataExtensionField']} -> "
+              f"{de['sendableSubscriberField']}"
+          )
+          print(f"Fields: {len(fields)}")
+          print("Data rows retrieved: NO")
+          PY
+
+      # ============================================================
+      # 9. BUILD NORMALIZED JOURNEY DEFINITION
+      # ============================================================
+      - name: Build normalized Journey definition
+        id: normalize
+        shell: bash
+        env:
+          LOB: ${{ steps.config.outputs.lob }}
+          ASSET_ROOT: ${{ steps.config.outputs.asset_root }}
+          JOURNEYS_DIR: ${{ steps.config.outputs.journeys_dir }}
+          JOURNEY_NAME: ${{ inputs.journey_name }}
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          import json
+          import os
+          import re
+
+          lob = os.environ["LOB"]
+          asset_root = os.environ["ASSET_ROOT"]
+          journeys_dir = os.environ["JOURNEYS_DIR"]
+          requested_name = os.environ["JOURNEY_NAME"]
+
+          with open("/tmp/journey.json", encoding="utf-8") as f:
+              journey = json.load(f)
+
+          with open("/tmp/event-definition.json", encoding="utf-8") as f:
+              event = json.load(f)
+
+          with open("/tmp/entry-data-extension.json", encoding="utf-8") as f:
+              entry_de = json.load(f)
+
+          if (journey.get("name") or "").strip() != requested_name.strip():
+              raise RuntimeError(
+                  "Normalization blocked: Journey name mismatch."
+              )
+
+          triggers = journey.get("triggers") or []
+
+          if len(triggers) != 1:
+              raise RuntimeError(
+                  "Normalization blocked: expected one Journey trigger."
+              )
+
+          event_key = triggers[0].get("eventDefinitionKey")
+
+          if event.get("eventDefinitionKey") != event_key:
+              raise RuntimeError(
+                  "Normalization blocked: Event Definition mismatch."
+              )
+
+          if event.get("dataExtensionId") != entry_de.get("objectId"):
+              raise RuntimeError(
+                  "Normalization blocked: Entry DE relationship mismatch."
+              )
+
+          activities = journey.get("activities") or []
+
+          # Preserve complete Journey activity definitions exactly as
+          # returned by Journey Builder. This includes Wait arguments,
+          # Decision Split criteria and outcome/next relationships.
+          normalized = {
+              "schemaVersion": "1.0",
+              "assetType": "journey",
+              "lineOfBusiness": lob,
+
+              "journey": {
+                  "name": journey.get("name"),
+                  "key": journey.get("key"),
+                  "description": journey.get("description"),
+                  "workflowApiVersion": journey.get("workflowApiVersion"),
+                  "source": {
+                      "id": journey.get("id"),
+                      "version": (
+                          journey.get("version")
+                          or journey.get("versionNumber")
+                      ),
+                      "status": journey.get("status")
+                  },
+                  "defaults": journey.get("defaults"),
+                  "triggers": triggers,
+                  "activities": activities,
+                  "goals": journey.get("goals") or []
+              },
+
+              "entryEventDefinition": {
+                  "id": event.get("id"),
+                  "eventDefinitionKey": event.get("eventDefinitionKey"),
+                  "name": event.get("name"),
+                  "description": event.get("description"),
+                  "type": event.get("type"),
+                  "mode": event.get("mode"),
+                  "sourceApplicationExtensionId": (
+                      event.get("sourceApplicationExtensionId")
+                  ),
+                  "dataExtensionId": event.get("dataExtensionId"),
+                  "dataExtensionName": event.get("dataExtensionName")
+              },
+
+              "dependencies": {
+                  "entryDataExtension": entry_de
+              },
+
+              "deploymentPolicy": {
+                  "deployStructure": True,
+                  "deployEntryDataExtension": True,
+                  "deployDataRows": False,
+                  "publishJourney": False,
+                  "activateJourney": False
+              }
+          }
+
+          safe_name = re.sub(
+              r"[^A-Za-z0-9._-]+",
+              "-",
+              requested_name.strip()
+          ).strip("-")
+
+          if not safe_name:
+              raise RuntimeError(
+                  "Could not derive safe Journey directory name."
+              )
+
+          output_dir = os.path.join(
+              asset_root,
+              lob,
+              journeys_dir,
+              safe_name
+          )
+
+          os.makedirs(output_dir, exist_ok=True)
+
+          output_file = os.path.join(
+              output_dir,
+              "definition.json"
+          )
+
+          with open(output_file, "w", encoding="utf-8") as f:
+              json.dump(
+                  normalized,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+              f.write("\n")
+
+          print("Normalized Journey definition created.")
+          print(f"Output: {output_file}")
+          print(f"Journey: {journey.get('name')}")
+          print(f"Activities: {len(activities)}")
+          print(f"Entry DE: {entry_de.get('name')}")
+          print(f"Entry DE fields: {len(entry_de.get('fields') or [])}")
+          print("Data rows retrieved: NO")
+          print("Publish/Activate requested: NO")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"output_file={output_file}\n")
+          PY
+
+      # ============================================================
+      # 10. VALIDATE RETRIEVED DEFINITION
+      # ============================================================
+      - name: Validate retrieved Journey definition
+        shell: bash
+        env:
+          OUTPUT_FILE: ${{ steps.normalize.outputs.output_file }}
+          JOURNEY_NAME: ${{ inputs.journey_name }}
+        run: |
+          set -euo pipefail
+
+          [ -f "$OUTPUT_FILE" ] || {
+            echo "ERROR: Journey definition file was not created."
+            exit 1
+          }
+
+          jq -e \
+            --arg journey "$JOURNEY_NAME" \
+            '
+              .schemaVersion == "1.0"
+              and .assetType == "journey"
+              and .journey.name == $journey
+              and (.journey.triggers | length) == 1
+              and (.journey.activities | type) == "array"
+              and (.entryEventDefinition.eventDefinitionKey | length) > 0
+              and (.dependencies.entryDataExtension.customerKey | length) > 0
+              and (.dependencies.entryDataExtension.fields | length) > 0
+              and .deploymentPolicy.deployDataRows == false
+              and .deploymentPolicy.publishJourney == false
+              and .deploymentPolicy.activateJourney == false
+            ' \
+            "$OUTPUT_FILE" > /dev/null || {
+              echo "ERROR: Retrieved Journey definition validation failed."
+              exit 1
+            }
+
+          echo "Journey definition validation passed."
+
+      # ============================================================
+      # 11. RETRIEVAL SUMMARY
+      # ============================================================
+      - name: Retrieval summary
+        shell: bash
+        env:
+          OUTPUT_FILE: ${{ steps.normalize.outputs.output_file }}
+        run: |
+          set -euo pipefail
+
+          echo ""
+          echo "=============================================="
+          echo "JOURNEY RETRIEVAL VERIFIED"
+          echo "=============================================="
+
+          jq -r '
+            "Journey: " + (.journey.name // ""),
+            "Journey Key: " + (.journey.key // ""),
+            "Source Status: " + (.journey.source.status // ""),
+            "Event Definition Key: " +
+              (.entryEventDefinition.eventDefinitionKey // ""),
+            "Entry DE: " +
+              (.dependencies.entryDataExtension.name // ""),
+            "Entry DE CustomerKey: " +
+              (.dependencies.entryDataExtension.customerKey // ""),
+            "Entry DE Fields: " +
+              ((.dependencies.entryDataExtension.fields | length) | tostring),
+            "Activities: " +
+              ((.journey.activities | length) | tostring),
+            "Data rows retrieved: NO",
+            "Publish requested: NO",
+            "Activate requested: NO"
+          ' "$OUTPUT_FILE"
+
+          echo "=============================================="
+          echo ""
+
+      # ============================================================
+      # 12. COMMIT RETRIEVED JOURNEY TO SANDBOX BRANCH
+      # ============================================================
+      - name: Commit retrieved Journey
+        shell: bash
+        env:
+          OUTPUT_FILE: ${{ steps.normalize.outputs.output_file }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$OUTPUT_FILE"
+
+          if git diff --cached --quiet; then
+            echo "No Journey changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Retrieve Journey from SFMC Sandbox"
+
+          git push origin HEAD:sandbox
+
+          echo "Journey definition committed to sandbox branch."
