@@ -394,6 +394,9 @@ jobs:
               "Description",
               "QueryText",
               "TargetType",
+              "DataExtensionTarget.Name",
+              "DataExtensionTarget.CustomerKey",
+              "DataExtensionTarget.Description",
               "TargetUpdateType",
               "CreatedDate",
               "ModifiedDate"
@@ -511,9 +514,20 @@ jobs:
 
                       for child in list(element):
                           key = child.tag.split("}")[-1]
-                          current[key] = (
-                              child.text or ""
-                          ).strip()
+
+                          if key == "DataExtensionTarget":
+                              target = {}
+                              for sub in list(child):
+                                  subkey = sub.tag.split("}")[-1]
+                                  target[subkey] = (
+                                      sub.text or ""
+                                  ).strip()
+                              current["DataExtensionTarget"] = target
+
+                          elif len(list(child)) == 0:
+                              current[key] = (
+                                  child.text or ""
+                              ).strip()
 
                       if (
                           current.get("ObjectID")
@@ -2417,6 +2431,20 @@ jobs:
                       "description": query.get("Description", ""),
                       "queryText": query.get("QueryText", ""),
                       "targetType": query.get("TargetType", ""),
+                      "targetDataExtension": {
+                          "name": (
+                              query.get("DataExtensionTarget", {})
+                              .get("Name", "")
+                          ),
+                          "customerKey": (
+                              query.get("DataExtensionTarget", {})
+                              .get("CustomerKey", "")
+                          ),
+                          "description": (
+                              query.get("DataExtensionTarget", {})
+                              .get("Description", "")
+                          )
+                      },
                       "targetUpdateType": query.get("TargetUpdateType", ""),
                       "categoryId": query.get("CategoryID", ""),
                       "status": query.get("Status", "")
@@ -3765,6 +3793,18 @@ jobs:
                           "QueryDefinition ObjectID."
                       )
 
+                  target_de = query.get("targetDataExtension") or {}
+                  target_de_key = (
+                      target_de.get("customerKey", "") or ""
+                  ).strip()
+
+                  if not target_de_key:
+                      raise SystemExit(
+                          "QueryDefinition target Data Extension CustomerKey "
+                          "was not returned by SFMC; deployment definition "
+                          "will not guess the target."
+                      )
+
                   task_activities.append({
                       "sequence": seq_value(activity.get("Sequence")),
                       "name": activity.get("Name", ""),
@@ -3779,6 +3819,13 @@ jobs:
                           "description": query.get("description", ""),
                           "queryText": query.get("queryText", ""),
                           "targetType": query.get("targetType", ""),
+                          "targetDataExtension": {
+                              "name": target_de.get("name", ""),
+                              "customerKey": target_de_key,
+                              "description": target_de.get(
+                                  "description", ""
+                              )
+                          },
                           "targetUpdateType": query.get("targetUpdateType", "")
                       }
                   })
