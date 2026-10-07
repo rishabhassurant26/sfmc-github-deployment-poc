@@ -570,6 +570,126 @@ jobs:
 
 
       # ============================================================
+      # 8. DISCOVER QUERYDEFINITION TARGET-DE RETRIEVAL SCHEMA
+      # Isolated diagnostic. Existing proven retrieval remains unchanged.
+      # ============================================================
+      - name: Discover QueryDefinition target DE schema
+        id: query_target_schema
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+        run: |
+          set -euo pipefail
+          export ACCESS_TOKEN SOAP_URL
+
+          python3 <<'PY'
+          import os, json, html, urllib.request, urllib.error
+          import xml.etree.ElementTree as ET
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+
+          body = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <soapenv:Envelope
+            xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+            xmlns:et="http://exacttarget.com/wsdl/partnerAPI">
+            <soapenv:Header>
+              <fueloauth xmlns="http://exacttarget.com">{html.escape(token, quote=True)}</fueloauth>
+            </soapenv:Header>
+            <soapenv:Body>
+              <et:DefinitionRequestMsg>
+                <et:DescribeRequests>
+                  <et:ObjectDefinitionRequest>
+                    <et:ObjectType>QueryDefinition</et:ObjectType>
+                  </et:ObjectDefinitionRequest>
+                </et:DescribeRequests>
+              </et:DefinitionRequestMsg>
+            </soapenv:Body>
+          </soapenv:Envelope>"""
+
+          req = urllib.request.Request(
+              soap_url + "/Service.asmx",
+              data=body.encode("utf-8"),
+              headers={
+                  "Content-Type": "text/xml; charset=UTF-8",
+                  "SOAPAction": "Describe"
+              },
+              method="POST"
+          )
+
+          try:
+              with urllib.request.urlopen(req) as response:
+                  raw = response.read()
+          except urllib.error.HTTPError as exc:
+              print(exc.read().decode("utf-8", errors="replace"))
+              raise SystemExit(f"QueryDefinition Describe HTTP {exc.code}")
+
+          Path = __import__("pathlib").Path
+          Path("querydefinition-describe-response.xml").write_bytes(raw)
+
+          root = ET.fromstring(raw)
+          local = lambda tag: tag.split("}")[-1]
+          properties = []
+
+          for node in root.iter():
+              if local(node.tag) != "Properties":
+                  continue
+              item = {}
+              for child in list(node):
+                  item[local(child.tag)] = (child.text or "").strip()
+              if item.get("Name"):
+                  properties.append(item)
+
+          retrievable = [
+              p for p in properties
+              if (p.get("IsRetrievable") or "").lower() == "true"
+          ]
+          target_related = [
+              p for p in retrievable
+              if "target" in (p.get("Name") or "").lower()
+              or "dataextension" in (p.get("Name") or "").lower()
+          ]
+
+          evidence = {
+              "objectType": "QueryDefinition",
+              "propertiesReturned": len(properties),
+              "retrievableProperties": len(retrievable),
+              "targetRelatedRetrievableProperties": target_related
+          }
+          Path("querydefinition-target-schema.json").write_text(
+              json.dumps(evidence, indent=2, ensure_ascii=False),
+              encoding="utf-8"
+          )
+
+          print("")
+          print("============================================")
+          print("QUERYDEFINITION TARGET-DE SCHEMA")
+          print("============================================")
+          print("Properties returned:", len(properties))
+          print("Retrievable properties:", len(retrievable))
+          print("Target-related retrievable properties:")
+
+          for p in target_related:
+              print(
+                  p.get("Name", ""),
+                  "| Type:", p.get("DataType", ""),
+                  "| Filterable:", p.get("IsFilterable", "")
+              )
+
+          if not target_related:
+              raise SystemExit(
+                  "SFMC Describe returned no retrievable target-related "
+                  "QueryDefinition properties."
+              )
+
+          print("")
+          print("RESULT: QUERYDEFINITION TARGET-DE SCHEMA DISCOVERED")
+          print("============================================")
+          PY
+
+
+      # ============================================================
       # 9. PROGRAM DISCOVERY
       #
       # Official Installed Package SOAP access documentation:
