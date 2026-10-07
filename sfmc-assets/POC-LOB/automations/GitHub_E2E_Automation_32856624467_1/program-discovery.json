@@ -1,0 +1,21 @@
+{
+  "status": "PROGRAM_RESOLVED",
+  "soapStatus": "OK",
+  "automation": {
+    "name": "GitHub E2E Automation 32856624467_1",
+    "customerKey": "E2EA_32856624467_1"
+  },
+  "program": {
+    "PartnerKey": "",
+    "CreatedDate": "2026-08-25T07:58:57.6",
+    "ModifiedDate": "2026-08-25T07:59:05.517",
+    "ObjectID": "6d9e9be9-77a5-4ea5-931b-dad614ff9769",
+    "CustomerKey": "E2EA_32856624467_1",
+    "Name": "GitHub E2E Automation 32856624467_1",
+    "Description": "E2E Automation created through GitHub CI/CD",
+    "IsActive": "true",
+    "Status": "2"
+  },
+  "relationshipStatus": "PROGRAM_IDENTITY_ONLY",
+  "relationshipReason": "SFMC returned a Program matching the existing Automation CustomerKey. Task and Activity relationships have not yet been inferred."
+}
