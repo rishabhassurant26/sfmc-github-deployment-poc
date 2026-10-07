@@ -1493,6 +1493,10 @@ jobs:
 
           ACTIVITY_DESCRIBE_STATUS: ${{ steps.activity_describe.outputs.describe_status }}
           ACTIVITY_PROPERTY_COUNT: ${{ steps.activity_describe.outputs.property_count }}
+
+          ACTIVITY_RETRIEVE_OUTCOME: ${{ steps.activity_retrieve.outcome }}
+          ACTIVITY_DISCOVERY_STATUS: ${{ steps.activity_retrieve.outputs.discovery_status }}
+          ACTIVITY_COUNT: ${{ steps.activity_retrieve.outputs.activity_count }}
         run: |
           set -euo pipefail
 
@@ -1998,7 +2002,423 @@ jobs:
 
 
       # ============================================================
-      # 13. BUILD DEFINITION
+      # 13. RETRIEVE ACTIVITIES FOR RESOLVED TASK(S)
+      #
+      # Live Activity Describe proved Task.ObjectID is retrievable.
+      # Task ObjectIDs come dynamically from the already-proven
+      # Program -> Task discovery artifact. Nothing is hardcoded.
+      #
+      # This isolated step tests Task -> Activity and cross-checks
+      # every returned Activity against its source Task ObjectID.
+      # ============================================================
+      - name: Retrieve Activities for resolved Tasks
+        id: activity_retrieve
+        continue-on-error: true
+        shell: bash
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOAP_URL: ${{ steps.auth.outputs.soap_url }}
+        run: |
+          set -euo pipefail
+
+          export ACCESS_TOKEN
+          export SOAP_URL
+
+          python3 <<'PY'
+          import os
+          import json
+          import html
+          import urllib.request
+          import urllib.error
+          import xml.etree.ElementTree as ET
+
+          token = os.environ["ACCESS_TOKEN"]
+          soap_url = os.environ["SOAP_URL"].rstrip("/")
+
+          if not os.path.exists("task-discovery.json"):
+              raise SystemExit(
+                  "task-discovery.json is unavailable; "
+                  "Activity retrieval will not guess a Task."
+              )
+
+          with open(
+              "task-discovery.json",
+              encoding="utf-8"
+          ) as f:
+              task_discovery = json.load(f)
+
+          if task_discovery.get("status") != "TASKS_RESOLVED":
+              raise SystemExit(
+                  "Program -> Task relationship is not resolved; "
+                  "Activity retrieval stopped."
+              )
+
+          tasks = task_discovery.get("tasks") or []
+
+          task_object_ids = []
+
+          for task in tasks:
+              object_id = (
+                  task.get("ObjectID", "")
+                  or ""
+              ).strip()
+
+              if object_id:
+                  task_object_ids.append(object_id)
+
+          if not task_object_ids:
+              raise SystemExit(
+                  "No resolved Task ObjectIDs were returned by SFMC."
+              )
+
+          def esc(value):
+              return html.escape(value or "", quote=True)
+
+          # Only properties returned as retrievable by the live
+          # Activity Describe run are requested here.
+          properties = [
+              "ObjectID",
+              "Program.ObjectID",
+              "Task.ObjectID",
+              "Sequence",
+              "Name",
+              "Description",
+              "Definition.ID",
+              "Definition.ObjectID",
+              "PartnerAPIObjectTypeID",
+              "CustomerKey",
+              "IsActive"
+          ]
+
+          props = "\n".join(
+              f"<et:Properties>{p}</et:Properties>"
+              for p in properties
+          )
+
+          all_activities = []
+          raw_responses = []
+          soap_statuses = []
+
+          for index, task_object_id in enumerate(
+              task_object_ids,
+              start=1
+          ):
+
+              body = f"""<?xml version="1.0" encoding="UTF-8"?>
+              <soapenv:Envelope
+                xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                xmlns:et="http://exacttarget.com/wsdl/partnerAPI"
+                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+                <soapenv:Header>
+                  <fueloauth xmlns="http://exacttarget.com">{token}</fueloauth>
+                </soapenv:Header>
+
+                <soapenv:Body>
+                  <et:RetrieveRequestMsg>
+                    <et:RetrieveRequest>
+
+                      <et:ObjectType>Activity</et:ObjectType>
+
+                      {props}
+
+                      <et:Filter xsi:type="et:SimpleFilterPart">
+                        <et:Property>Task.ObjectID</et:Property>
+                        <et:SimpleOperator>equals</et:SimpleOperator>
+                        <et:Value>{esc(task_object_id)}</et:Value>
+                      </et:Filter>
+
+                    </et:RetrieveRequest>
+                  </et:RetrieveRequestMsg>
+                </soapenv:Body>
+
+              </soapenv:Envelope>
+              """
+
+              request = urllib.request.Request(
+                  soap_url + "/Service.asmx",
+                  data=body.encode("utf-8"),
+                  headers={
+                      "Content-Type": "text/xml; charset=UTF-8",
+                      "SOAPAction": "Retrieve"
+                  },
+                  method="POST"
+              )
+
+              try:
+                  with urllib.request.urlopen(request) as response:
+                      xml_data = response.read()
+
+              except urllib.error.HTTPError as exc:
+                  response_text = exc.read().decode(
+                      "utf-8",
+                      errors="replace"
+                  )
+                  print(response_text)
+                  raise SystemExit(
+                      f"Activity Retrieve HTTP {exc.code} "
+                      f"for Task {task_object_id}"
+                  )
+
+              response_file = (
+                  f"activity-retrieve-response-{index}.xml"
+              )
+
+              with open(
+                  response_file,
+                  "wb"
+              ) as f:
+                  f.write(xml_data)
+
+              raw_responses.append(response_file)
+
+              root = ET.fromstring(xml_data)
+
+              overall = ""
+              request_id = ""
+              activities = []
+
+              for element in root.iter():
+
+                  local = element.tag.split("}")[-1]
+
+                  if local == "OverallStatus":
+                      overall = (
+                          element.text or ""
+                      ).strip()
+
+                  elif local == "RequestID":
+                      request_id = (
+                          element.text or ""
+                      ).strip()
+
+                  elif local == "Results":
+
+                      current = {}
+
+                      for child in list(element):
+
+                          key = child.tag.split("}")[-1]
+
+                          if key in (
+                              "Program",
+                              "Task",
+                              "Definition"
+                          ):
+                              nested = {}
+
+                              for sub in list(child):
+                                  subkey = sub.tag.split("}")[-1]
+                                  nested[subkey] = (
+                                      sub.text or ""
+                                  ).strip()
+
+                              current[key] = nested
+
+                          elif len(list(child)) == 0:
+                              current[key] = (
+                                  child.text or ""
+                              ).strip()
+
+                      if current:
+                          activities.append(current)
+
+              soap_statuses.append({
+                  "taskObjectId": task_object_id,
+                  "soapStatus": overall,
+                  "requestId": request_id,
+                  "activitiesReturned": len(activities)
+              })
+
+              print("")
+              print("============================================")
+              print("TASK -> ACTIVITY RETRIEVE")
+              print("============================================")
+              print("SOAP Status:", overall)
+              print("Task ObjectID:", task_object_id)
+              print("Activities returned:", len(activities))
+              print("")
+
+              if overall not in (
+                  "OK",
+                  "MoreDataAvailable"
+              ):
+                  result = {
+                      "status": "SOAP_ERROR",
+                      "tasksChecked": len(task_object_ids),
+                      "soapResults": soap_statuses,
+                      "activities": all_activities
+                  }
+
+                  with open(
+                      "activity-discovery.json",
+                      "w",
+                      encoding="utf-8"
+                  ) as f:
+                      json.dump(
+                          result,
+                          f,
+                          indent=2,
+                          ensure_ascii=False
+                      )
+
+                  with open(
+                      os.environ["GITHUB_OUTPUT"],
+                      "a"
+                  ) as f:
+                      f.write("discovery_status=SOAP_ERROR\n")
+                      f.write("activity_count=0\n")
+
+                  raise SystemExit(
+                      "Activity Retrieve returned status: "
+                      + overall
+                  )
+
+              for activity in activities:
+
+                  returned_task_id = (
+                      activity.get("Task", {})
+                      .get("ObjectID", "")
+                  )
+
+                  print(
+                      "Activity ObjectID:",
+                      activity.get("ObjectID", "")
+                  )
+                  print(
+                      "Name:",
+                      activity.get("Name", "")
+                  )
+                  print(
+                      "Sequence:",
+                      activity.get("Sequence", "")
+                  )
+                  print(
+                      "Task.ObjectID:",
+                      returned_task_id
+                  )
+                  print(
+                      "Definition.ObjectID:",
+                      activity.get(
+                          "Definition",
+                          {}
+                      ).get(
+                          "ObjectID",
+                          ""
+                      )
+                  )
+                  print(
+                      "CustomerKey:",
+                      activity.get("CustomerKey", "")
+                  )
+                  print("--------------------------------------------")
+
+                  if returned_task_id != task_object_id:
+                      result = {
+                          "status": "TASK_CROSSCHECK_FAILED",
+                          "tasksChecked": len(task_object_ids),
+                          "soapResults": soap_statuses,
+                          "activities": (
+                              all_activities
+                              + activities
+                          )
+                      }
+
+                      with open(
+                          "activity-discovery.json",
+                          "w",
+                          encoding="utf-8"
+                      ) as f:
+                          json.dump(
+                              result,
+                              f,
+                              indent=2,
+                              ensure_ascii=False
+                          )
+
+                      raise SystemExit(
+                          "Returned Activity Task.ObjectID does not "
+                          "match the resolved source Task ObjectID."
+                      )
+
+                  activity["_sourceTaskObjectId"] = task_object_id
+                  all_activities.append(activity)
+
+          result = {
+              "status": "",
+              "tasksChecked": len(task_object_ids),
+              "taskObjectIds": task_object_ids,
+              "soapResults": soap_statuses,
+              "activitiesReturned": len(all_activities),
+              "activities": all_activities,
+              "rawResponseFiles": raw_responses
+          }
+
+          if not all_activities:
+              result["status"] = "NO_ACTIVITIES_RETURNED"
+
+              with open(
+                  "activity-discovery.json",
+                  "w",
+                  encoding="utf-8"
+              ) as f:
+                  json.dump(
+                      result,
+                      f,
+                      indent=2,
+                      ensure_ascii=False
+                  )
+
+              with open(
+                  os.environ["GITHUB_OUTPUT"],
+                  "a"
+              ) as f:
+                  f.write(
+                      "discovery_status=NO_ACTIVITIES_RETURNED\n"
+                  )
+                  f.write("activity_count=0\n")
+
+              print(
+                  "SFMC accepted Activity Retrieve but returned "
+                  "no Activities for the resolved Task ObjectID(s)."
+              )
+              raise SystemExit(1)
+
+          result["status"] = "ACTIVITIES_RESOLVED"
+
+          with open(
+              "activity-discovery.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  result,
+                  f,
+                  indent=2,
+                  ensure_ascii=False
+              )
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a"
+          ) as f:
+              f.write(
+                  "discovery_status=ACTIVITIES_RESOLVED\n"
+              )
+              f.write(
+                  "activity_count="
+                  + str(len(all_activities))
+                  + "\n"
+              )
+
+          print("")
+          print("RESULT: TASK -> ACTIVITY RELATIONSHIP RESOLVED")
+          print("============================================")
+          PY
+
+
+      # ============================================================
+      # 14. BUILD DEFINITION
       #
       # IMPORTANT:
       # Program discovery is recorded as discovery evidence only.
@@ -2328,7 +2748,7 @@ jobs:
 
 
       # ============================================================
-      # 14. SAVE RESULT
+      # 15. SAVE RESULT
       # ============================================================
       - name: Save retrieved Automation definition
         id: save
@@ -2402,6 +2822,18 @@ jobs:
               "$OUTPUT_DIR/activity-describe-response.xml"
           fi
 
+          if [ -f activity-discovery.json ]; then
+            cp activity-discovery.json \
+              "$OUTPUT_DIR/activity-discovery.json"
+          fi
+
+          for RESPONSE_FILE in activity-retrieve-response-*.xml; do
+            if [ -f "$RESPONSE_FILE" ]; then
+              cp "$RESPONSE_FILE" \
+                "$OUTPUT_DIR/$RESPONSE_FILE"
+            fi
+          done
+
           echo "output_dir=$OUTPUT_DIR" >> "$GITHUB_OUTPUT"
 
           echo "Saved to:"
@@ -2409,7 +2841,7 @@ jobs:
 
 
       # ============================================================
-      # 15. DISPLAY RESULT
+      # 16. DISPLAY RESULT
       # ============================================================
       - name: Display retrieved definition
         shell: bash
@@ -2480,9 +2912,20 @@ jobs:
               "$OUTPUT_DIR/activity-describe.json"
           fi
 
+          if [ -f "$OUTPUT_DIR/activity-discovery.json" ]; then
+
+            echo ""
+            echo "============================================"
+            echo "TASK -> ACTIVITY DISCOVERY"
+            echo "============================================"
+
+            jq . \
+              "$OUTPUT_DIR/activity-discovery.json"
+          fi
+
 
       # ============================================================
-      # 16. COMMIT
+      # 17. COMMIT
       # ============================================================
       - name: Commit retrieved Automation
         shell: bash
@@ -2516,7 +2959,7 @@ jobs:
 
 
       # ============================================================
-      # 17. FINAL RESULT
+      # 18. FINAL RESULT
       # ============================================================
       - name: Retrieval complete
         shell: bash
@@ -2615,6 +3058,18 @@ jobs:
           echo ""
           echo "Activity retrievable properties:"
           echo "${ACTIVITY_PROPERTY_COUNT:-0}"
+
+          echo ""
+          echo "Activity Retrieve step outcome:"
+          echo "${ACTIVITY_RETRIEVE_OUTCOME:-[not available]}"
+
+          echo ""
+          echo "Task -> Activity discovery status:"
+          echo "${ACTIVITY_DISCOVERY_STATUS:-[not available]}"
+
+          echo ""
+          echo "Activities returned:"
+          echo "${ACTIVITY_COUNT:-0}"
 
           echo ""
           echo "IMPORTANT:"
