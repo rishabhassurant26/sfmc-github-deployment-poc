@@ -396,3 +396,57 @@ jobs:
           print('Published: NO')
           print('Activated/Started: NO')
           PY
+
+      - name: GitHub Actions deployment summary
+        if: always()
+        shell: bash
+        env:
+          DEFINITION_FILE: ${{ steps.config.outputs.definition }}
+          PRODUCTION_MID: ${{ steps.config.outputs.production_mid }}
+          DE_RESULT: ${{ steps.de.outcome }}
+          EVENT_RESULT: ${{ steps.event.outcome }}
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          python3 <<'PY_SUMMARY'
+          import json, os
+          from pathlib import Path
+
+          definition = Path(os.environ.get('DEFINITION_FILE') or '')
+          data = {}
+          if definition.is_file():
+              try:
+                  data = json.loads(definition.read_text(encoding='utf-8'))
+              except (OSError, ValueError):
+                  pass
+
+          journey = data.get('journey') or {}
+          entry_de = (data.get('dependencies') or {}).get('entryDataExtension') or {}
+          event = data.get('entryEventDefinition') or {}
+          policy = data.get('deploymentPolicy') or {}
+          status = os.environ.get('JOB_RESULT', 'unknown')
+
+          def safe(value):
+              return str(value if value is not None else 'N/A').replace('|', r'\|').replace('\n', ' ')
+
+          rows = [
+              ('Overall job result', status.upper()),
+              ('Target environment', 'Production'),
+              ('Production BU MID', os.environ.get('PRODUCTION_MID') or 'N/A'),
+              ('Journey name', journey.get('name') or 'N/A'),
+              ('Journey key', journey.get('key') or 'N/A'),
+              ('Entry Data Extension', entry_de.get('name') or 'N/A'),
+              ('Entry DE CustomerKey', entry_de.get('customerKey') or 'N/A'),
+              ('Entry DE reconciliation step', os.environ.get('DE_RESULT') or 'not run'),
+              ('Event Definition key', event.get('eventDefinitionKey') or 'N/A'),
+              ('Event reconciliation step', os.environ.get('EVENT_RESULT') or 'not run'),
+              ('Journey activities in definition', len(journey.get('activities') or [])),
+              ('Data rows deployment permitted', 'YES' if policy.get('deployDataRows') else 'NO'),
+              ('Journey publishing permitted', 'YES' if policy.get('publishJourney') else 'NO'),
+              ('Journey activation permitted', 'YES' if policy.get('activateJourney') else 'NO'),
+          ]
+          lines = ['## SFMC Journey Production Deployment Summary', '', '| Item | Result |', '|---|---|']
+          lines.extend(f'| {safe(k)} | {safe(v)} |' for k, v in rows)
+          lines.extend(['', '> Step outcomes indicate execution status; review logs for CREATE/SKIP details.'])
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
+              f.write('\n'.join(lines) + '\n')
+          PY_SUMMARY
