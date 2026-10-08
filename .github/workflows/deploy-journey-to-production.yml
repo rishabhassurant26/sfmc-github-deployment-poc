@@ -247,7 +247,7 @@ jobs:
               if f.get('maxLength') is not None and child(a,'MaxLength') != str(f['maxLength']): raise RuntimeError(f'Entry DE MaxLength mismatch for {name}')
           print(f'Entry DE {action}/PASS: {key} | ObjectID={oid}')
           print('Data rows deployed: NO')
-          with open(os.environ['GITHUB_OUTPUT'],'a') as out: out.write(f'object_id={oid}\n')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out: out.write(f'object_id={oid}\n'); out.write(f'action={action}\n')
           PY
 
       - name: Reconcile Entry Event Definition
@@ -317,10 +317,11 @@ jobs:
           if event.get('eventDefinitionKey') != key: raise RuntimeError('Event Definition verification key mismatch.')
           if event.get('dataExtensionId') != deid: raise RuntimeError('Event Definition verification DE mismatch.')
           print(f'Entry Event Definition {action}/PASS: {key}')
-          with open(os.environ['GITHUB_OUTPUT'],'a') as out: out.write(f'event_key={key}\n')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out: out.write(f'event_key={key}\n'); out.write(f'action={action}\n')
           PY
 
       - name: Create or verify Draft Journey structure
+        id: journey
         shell: bash
         env:
           FILE: ${{ steps.config.outputs.definition }}
@@ -352,6 +353,7 @@ jobs:
               print('Production Journey already exists. No UPDATE performed.')
               print(f"Journey: {existing.get('name')} | Status={existing.get('status')} | Version={existing.get('version') or existing.get('versionNumber')}")
               print('Publish: NO | Activate/Start: NO | Update: NO')
+              with open(os.environ['GITHUB_OUTPUT'],'a') as out: out.write('action=SKIP\n')
               raise SystemExit(0)
 
           trigger=copy.deepcopy((j.get('triggers') or [])[0])
@@ -395,6 +397,7 @@ jobs:
           print('Data rows deployed: NO')
           print('Published: NO')
           print('Activated/Started: NO')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out: out.write('action=CREATE\n')
           PY
 
       - name: GitHub Actions deployment summary
@@ -404,7 +407,11 @@ jobs:
           DEFINITION_FILE: ${{ steps.config.outputs.definition }}
           PRODUCTION_MID: ${{ steps.config.outputs.production_mid }}
           DE_RESULT: ${{ steps.de.outcome }}
+          DE_ACTION: ${{ steps.de.outputs.action }}
           EVENT_RESULT: ${{ steps.event.outcome }}
+          EVENT_ACTION: ${{ steps.event.outputs.action }}
+          JOURNEY_RESULT: ${{ steps.journey.outcome }}
+          JOURNEY_ACTION: ${{ steps.journey.outputs.action }}
           JOB_RESULT: ${{ job.status }}
         run: |
           python3 <<'PY_SUMMARY'
@@ -428,6 +435,11 @@ jobs:
           def safe(value):
               return str(value if value is not None else 'N/A').replace('|', r'\|').replace('\n', ' ')
 
+          def outcome(action, result):
+              if action in ('CREATE', 'SKIP') and result == 'success':
+                  return action + ' / PASS'
+              return (result or 'not run').upper()
+
           rows = [
               ('Overall job result', status.upper()),
               ('Target environment', 'Production'),
@@ -436,9 +448,10 @@ jobs:
               ('Journey key', journey.get('key') or 'N/A'),
               ('Entry Data Extension', entry_de.get('name') or 'N/A'),
               ('Entry DE CustomerKey', entry_de.get('customerKey') or 'N/A'),
-              ('Entry DE reconciliation step', os.environ.get('DE_RESULT') or 'not run'),
+              ('Entry DE reconciliation', outcome(os.environ.get('DE_ACTION'), os.environ.get('DE_RESULT'))),
               ('Event Definition key', event.get('eventDefinitionKey') or 'N/A'),
-              ('Event reconciliation step', os.environ.get('EVENT_RESULT') or 'not run'),
+              ('Event Definition reconciliation', outcome(os.environ.get('EVENT_ACTION'), os.environ.get('EVENT_RESULT'))),
+              ('Journey deployment', outcome(os.environ.get('JOURNEY_ACTION'), os.environ.get('JOURNEY_RESULT'))),
               ('Journey activities in definition', len(journey.get('activities') or [])),
               ('Data rows deployment permitted', 'YES' if policy.get('deployDataRows') else 'NO'),
               ('Journey publishing permitted', 'YES' if policy.get('publishJourney') else 'NO'),
@@ -446,7 +459,7 @@ jobs:
           ]
           lines = ['## SFMC Journey Production Deployment Summary', '', '| Item | Result |', '|---|---|']
           lines.extend(f'| {safe(k)} | {safe(v)} |' for k, v in rows)
-          lines.extend(['', '> Step outcomes indicate execution status; review logs for CREATE/SKIP details.'])
+          lines.extend(['', '> CREATE = newly created; SKIP = already existed. Overall SUCCESS means the workflow completed successfully.'])
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
               f.write('\n'.join(lines) + '\n')
           PY_SUMMARY
