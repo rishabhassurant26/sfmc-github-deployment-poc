@@ -947,6 +947,46 @@ jobs:
           echo ""
 
       # ============================================================
+      # 12. GITHUB ACTIONS JOB SUMMARY (REPORTING ONLY)
+      # ============================================================
+      - name: Publish Journey retrieval job summary
+        if: success()
+        shell: bash
+        env:
+          OUTPUT_FILE: ${{ steps.normalize.outputs.output_file }}
+          SANDBOX_MID: ${{ steps.config.outputs.sandbox_mid }}
+          LOB: ${{ steps.config.outputs.lob }}
+        run: |
+          set -euo pipefail
+          [ -f "$OUTPUT_FILE" ] || exit 1
+          {
+            echo "## SFMC Journey Retrieval Summary"
+            echo ""
+            echo "| Item | Result |"
+            echo "| --- | --- |"
+            jq -r --arg mid "$SANDBOX_MID" --arg lob "$LOB" '
+              def clean: tostring | gsub("[\r\n|]"; " ");
+              "| Environment | Sandbox |",
+              "| Business Unit MID | " + ($mid | clean) + " |",
+              "| Line of Business | " + ($lob | clean) + " |",
+              "| Journey | " + (.journey.name | clean) + " |",
+              "| Journey Key | " + (.journey.key | clean) + " |",
+              "| Source Status | " + (.journey.source.status | clean) + " |",
+              "| Entry Data Extension | " + (.dependencies.entryDataExtension.name | clean) + " |",
+              "| Entry DE CustomerKey | " + (.dependencies.entryDataExtension.customerKey | clean) + " |",
+              "| Entry DE Fields | " + ((.dependencies.entryDataExtension.fields | length) | tostring) + " |",
+              "| Event Definition Key | " + (.entryEventDefinition.eventDefinitionKey | clean) + " |",
+              "| Journey Activities | " + ((.journey.activities | length) | tostring) + " |",
+              "| Data Rows Retrieved | NO |",
+              "| Publish / Activate | NO |",
+              "| Definition Validation | PASS |",
+              "| Result | SUCCESS |"
+            ' "$OUTPUT_FILE"
+            echo ""
+            echo "Generated from the validated Journey definition."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ============================================================
       # 12. COMMIT RETRIEVED JOURNEY TO SANDBOX BRANCH
       # ============================================================
       - name: Commit retrieved Journey
